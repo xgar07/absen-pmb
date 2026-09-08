@@ -82,6 +82,13 @@ export default function Login() {
         <p className="text-center mt-md">
           Belum punya akun? <Link to="/register" className="link">Daftar di sini</Link>
         </p>
+
+        <div style={{ marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)', textAlign: 'center' }}>
+          <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '0.75rem' }}>PC meja pendaftaran?</p>
+          <Link to="/kiosk" className="btn btn-primary" style={{ backgroundColor: '#0f172a', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '100%' }}>
+            🖥️ Buka Attendance Kiosk
+          </Link>
+        </div>
       </div>
     </div>
   );
