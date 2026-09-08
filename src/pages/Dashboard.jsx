@@ -47,6 +47,16 @@ export default function Dashboard() {
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
+  // Phase 8A States
+  const [shiftsList, setShiftsList] = useState([]);
+  const [schedulesList, setSchedulesList] = useState([]);
+  const [mySchedules, setMySchedules] = useState([]);
+  const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
+  const [shiftFormData, setShiftFormData] = useState({ shift_id: '', schedule_date: '' });
+  const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
+  const [selectedSchedule, setSelectedSchedule] = useState(null);
+  const [memberFormData, setMemberFormData] = useState({ selectedPanitia: [] });
+
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
@@ -81,12 +91,18 @@ export default function Dashboard() {
 
       if (profileData.role === 'panitia') {
         // Attendance
-        const { data: attData } = await supabase.from('attendance').select('*').eq('panitia_id', user.id).gte('waktu_absen', bounds.start).lt('waktu_absen', bounds.end).maybeSingle();
-        setAttendanceData(attData);
+        const { data: attData } = await supabase.from('attendance').select('*').eq('panitia_id', user.id).gte('waktu_absen', bounds.start).lt('waktu_absen', bounds.end);
+        setAttendanceData(attData || []);
 
         // Events
         const { data: eventsData } = await supabase.from('events').select('*').order('date', { ascending: true }).order('start_time', { ascending: true });
         setEvents(eventsData || []);
+
+        // Phase 8A: Panitia Shifts
+        const todayStr = bounds.start.substring(0, 10);
+        const { data: rawMyShifts } = await supabase.from('shift_members').select('schedule_id, shift_schedules(schedule_date, shifts(name, start_time, end_time))').eq('user_id', user.id);
+        const validShifts = (rawMyShifts || []).filter(x => x.shift_schedules && x.shift_schedules.schedule_date >= todayStr).sort((a,b) => a.shift_schedules.schedule_date.localeCompare(b.shift_schedules.schedule_date));
+        setMySchedules(validShifts);
 
         // Tasks (Phase E) - Panitia sees all
         const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').neq('status', 'completed').order('deadline', { ascending: true }).order('created_at', { ascending: false });
@@ -129,6 +145,12 @@ export default function Dashboard() {
         // Events
         const { data: eventsData } = await supabase.from('events').select('*, event_members (panitia_id)').order('date', { ascending: false }).order('start_time', { ascending: false });
         setEvents(eventsData || []);
+
+        // Phase 8A: Dosen Shifts
+        const { data: shiftsData } = await supabase.from('shifts').select('*').order('start_time');
+        setShiftsList(shiftsData || []);
+        const { data: schedulesData } = await supabase.from('shift_schedules').select('*, shifts(*), shift_members(*, profiles(full_name))').order('schedule_date', { ascending: false });
+        setSchedulesList(schedulesData || []);
 
         // Tasks (Phase E) - Dosen sees own
         const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
@@ -238,25 +260,16 @@ export default function Dashboard() {
     setTaskLogs(data || []);
   };
 
-  const handleClaimTask = async () => {
-    setFormError(''); setFormLoading(true);
-    try {
-      const { data, error } = await supabase.rpc('claim_task', { p_task_id: selectedTask.id });
-      if (error) throw error;
-      if (!data.success) throw new Error(data.message);
-      setIsTaskModalOpen(false); fetchDashboardData();
-    } catch (err) { setFormError(err.message); } finally { setFormLoading(false); }
-  };
 
   const submitProgress = async (e) => {
     e.preventDefault(); setFormError(''); setFormLoading(true);
     try {
       if (!progressFormData.report) throw new Error('Laporan wajib diisi');
       const prog = parseInt(progressFormData.progress);
-      if (prog < 0 || prog > 100) throw new Error('Progress 0 - 100');
+      if (prog < 1 || prog > 100) throw new Error('Kontribusi minimal 1% dan maksimal 100%');
       
       const { data, error } = await supabase.rpc('add_task_progress', {
-        p_task_id: selectedTask.id, p_progress: prog, p_report: progressFormData.report
+        p_task_id: selectedTask.id, p_contribution: prog, p_report: progressFormData.report
       });
       if (error) throw error;
       if (!data.success) throw new Error(data.message);
@@ -355,6 +368,56 @@ export default function Dashboard() {
       if (error) throw error;
       fetchDashboardData();
     } catch (err) { window.alert(err.message); }
+  };
+
+  const handleRepairStation = async (id) => {
+    if (!window.confirm('Station akan terputus dari perangkat lamanya. Lanjutkan Pair Ulang?')) return;
+    setFormError(''); setFormLoading(true);
+    try {
+      const { data, error } = await supabase.rpc('repair_kiosk_station', { p_station_id: id });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      
+      setPairingResult({ station_id: data.station_id, pairing_code: data.pairing_code, is_repair: true });
+      setIsStationModalOpen(true);
+      fetchDashboardData();
+    } catch (err) {
+      alert(err.message || 'Gagal me-reset Kiosk');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
+  const handleAddShiftSchedule = async (e) => {
+    e.preventDefault();
+    setFormLoading(true); setFormError('');
+    try {
+      const { error } = await supabase.from('shift_schedules').insert({
+        shift_id: shiftFormData.shift_id,
+        schedule_date: shiftFormData.schedule_date,
+        created_by: profile.id
+      });
+      if (error) throw error;
+      setIsShiftModalOpen(false);
+      fetchDashboardData();
+    } catch (err) { setFormError(err.message || 'Gagal menyimpan jadwal'); }
+    finally { setFormLoading(false); }
+  };
+
+  const handleUpdateMembers = async (e) => {
+    e.preventDefault();
+    setFormLoading(true); setFormError('');
+    try {
+      const { data, error } = await supabase.rpc('manage_shift_members', {
+        p_schedule_id: selectedSchedule.id,
+        p_user_ids: memberFormData.selectedPanitia
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      setIsMemberModalOpen(false);
+      fetchDashboardData();
+    } catch (err) { setFormError(err.message || 'Gagal update member'); }
+    finally { setFormLoading(false); }
   };
 
   // Formatting helpers
@@ -475,6 +538,52 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Phase 8A: JADWAL SHIFT */}
+            <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+              <div className="event-header">
+                <h2>JADWAL SHIFT</h2>
+                <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().start.substring(0,10) }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+                {(() => {
+                  const grouped = schedulesList.reduce((acc, curr) => {
+                    const date = curr.schedule_date;
+                    if (!acc[date]) acc[date] = [];
+                    acc[date].push(curr);
+                    return acc;
+                  }, {});
+                  
+                  return Object.keys(grouped).sort((a,b) => b.localeCompare(a)).map(date => (
+                    <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                      <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
+                        {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                      </h3>
+                      {grouped[date].map(sched => (
+                        <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                            <div style={{ fontWeight: 'bold', color: '#334155' }}>
+                              {sched.shifts?.start_time.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name.toUpperCase()}
+                            </div>
+                            <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
+                              {sched.shift_members?.length || 0} Panitia
+                            </span>
+                          </div>
+                          <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                            {sched.shifts?.start_time.substring(0,5)} — {sched.shifts?.end_time.substring(0,5)}
+                          </div>
+                          <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
+                            Kelola Member
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ));
+                })()}
+                {schedulesList.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal shift.</p>}
+              </div>
+            </div>
+
             {/* Phase 7B: KIOSK STATION MANAGEMENT */}
             <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
               <div className="event-header">
@@ -492,8 +601,11 @@ export default function Dashboard() {
                           {station.is_active === false ? <span style={{ color: 'var(--error-color)', fontWeight: 'bold' }}>○ INACTIVE</span> : <span style={{ color: 'var(--success-color, #10b981)', fontWeight: 'bold' }}>● ACTIVE</span>}
                         </td>
                         <td>
-                            <button type="button" onClick={() => handleToggleStation(station)} className="btn btn-primary btn-small" style={{ backgroundColor: station.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+                            <button type="button" onClick={() => handleToggleStation(station)} className="btn btn-primary btn-small" style={{ backgroundColor: station.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.5rem' }}>
                               {station.is_active ? 'Disable' : 'Activate'}
+                            </button>
+                            <button type="button" onClick={() => handleRepairStation(station.id)} className="btn btn-primary btn-small" style={{ backgroundColor: '#f59e0b', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+                              Pair Ulang
                             </button>
                         </td>
                       </tr>
@@ -599,22 +711,95 @@ export default function Dashboard() {
             
             <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
               
-              {/* Phase C: ABSENSI HARI INI */}
-              <div className="attendance-section" style={{ marginTop: '2rem', padding: '2rem', backgroundColor: '#f1f5f9', borderRadius: '12px', flex: '1', minWidth: '300px' }}>
-                <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>ABSENSI HARI INI</h3>
-                {attendanceData ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                    <span className="badge-hadir" style={{ fontSize: '1.2rem', padding: '0.5rem 1.5rem' }}>HADIR</span>
-                    <p style={{ fontWeight: 'bold', color: '#0f172a', fontSize: '1.5rem' }}>{formatTimeWIB(attendanceData.waktu_absen)}</p>
-                  </div>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.5rem' }}>
-                    <span className="badge-belum" style={{ fontSize: '1.2rem', padding: '0.5rem 1.5rem' }}>BELUM ABSEN</span>
-                  </div>
-                )}
-                <div style={{ marginTop: '2rem', textAlign: 'center' }}>
-                  <button type="button" onClick={() => navigate('/scan')} className="btn btn-primary" style={{ padding: '1rem 2rem', fontSize: '1.1rem' }}>📷 Scan Absen</button>
-                </div>
+              {/* Phase 8B: JADWAL SAYA & ATTENDANCE */}
+              <div className="attendance-section" style={{ marginTop: '2rem', padding: '2rem', backgroundColor: '#f8fafc', borderRadius: '12px', flex: '1', minWidth: '300px' }}>
+                <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>JADWAL SAYA</h3>
+                
+                {(() => {
+                  const todayStr = getJakartaDayBounds().start.substring(0, 10);
+                  const todayShifts = mySchedules.filter(x => x.shift_schedules.schedule_date === todayStr);
+                  const upcomingShifts = mySchedules.filter(x => x.shift_schedules.schedule_date > todayStr).slice(0, 3);
+                  
+                  return (
+                    <>
+                      {todayShifts.length > 0 ? (
+                        todayShifts.map(item => {
+                          // Find IN and OUT records for this specific shift
+                          const inRecord = Array.isArray(attendanceData) ? attendanceData.find(a => a.shift_schedule_id === item.schedule_id && a.attendance_type === 'IN') : null;
+                          const outRecord = Array.isArray(attendanceData) ? attendanceData.find(a => a.shift_schedule_id === item.schedule_id && a.attendance_type === 'OUT') : null;
+                          
+                          let statusText = "BELUM ABSEN MASUK";
+                          let statusColor = "badge-belum";
+                          
+                          if (inRecord && !outRecord) {
+                            statusText = "SEDANG BERTUGAS";
+                            statusColor = "badge-hadir";
+                          } else if (inRecord && outRecord) {
+                            statusText = "SHIFT SELESAI";
+                            statusColor = "badge-hadir"; // or a different color for completed
+                          }
+
+                          return (
+                            <div key={item.schedule_id} style={{ padding: '1rem', backgroundColor: 'white', borderRadius: '8px', borderLeft: '4px solid #38bdf8', marginBottom: '1rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                              <div style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#0f172a' }}>
+                                {item.shift_schedules.shifts.start_time.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {item.shift_schedules.shifts.name.toUpperCase()}
+                              </div>
+                              <div style={{ color: '#38bdf8', fontWeight: '600', marginTop: '0.25rem', marginBottom: '1rem' }}>
+                                {item.shift_schedules.shifts.start_time.substring(0,5)} — {item.shift_schedules.shifts.end_time.substring(0,5)}
+                              </div>
+                              
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                                <div>
+                                  <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>IN</div>
+                                  <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: inRecord ? '#0f172a' : '#94a3b8' }}>
+                                    {inRecord ? formatTimeWIB(inRecord.waktu_absen) + ' ✓' : '—'}
+                                  </div>
+                                </div>
+                                <div>
+                                  <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>OUT</div>
+                                  <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: outRecord ? '#0f172a' : '#94a3b8' }}>
+                                    {outRecord ? formatTimeWIB(outRecord.waktu_absen) + ' ✓' : '—'}
+                                  </div>
+                                </div>
+                              </div>
+                              
+                              <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
+                                <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.25rem' }}>STATUS</div>
+                                <span className={statusColor} style={{ display: 'inline-block' }}>{statusText}</span>
+                              </div>
+                            </div>
+                          );
+                        })
+                      ) : (
+                        <p style={{ color: '#94a3b8', textAlign: 'center', margin: '1rem 0' }}>TIDAK ADA SHIFT HARI INI</p>
+                      )}
+                      
+                      {todayShifts.length > 0 && (
+                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                          <button type="button" onClick={() => navigate('/scan')} className="btn btn-primary" style={{ width: '100%' }}>📷 Scan Absen (Kiosk)</button>
+                        </div>
+                      )}
+                      
+                      {upcomingShifts.length > 0 && (
+                        <div style={{ marginTop: '2rem' }}>
+                          <h4 style={{ fontSize: '1rem', color: '#475569', marginBottom: '0.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem' }}>JADWAL BERIKUTNYA</h4>
+                          {upcomingShifts.map(item => (
+                            <div key={item.schedule_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                              <div>
+                                <div style={{ fontWeight: '600', color: '#334155' }}>
+                                  {item.shift_schedules.shifts.name} ({item.shift_schedules.shifts.start_time.substring(0,5)})
+                                </div>
+                                <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                                  {new Date(item.shift_schedules.schedule_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </div>
 
               {/* Phase E: TASK / WORKBOARD */}
@@ -740,35 +925,24 @@ export default function Dashboard() {
                 <span className={`task-status status-${selectedTask.status}`}>{selectedTask.status.replace('_', ' ')}</span>
                 <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>{selectedTask.description}</p>
                 <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}><strong>Deadline:</strong> {formatDate(selectedTask.deadline)}</p>
-                <p style={{ fontSize: '0.9rem' }}><strong>PIC Aktif:</strong> {selectedTask.profiles?.full_name || 'Belum ada'}</p>
 
                 <div style={{ margin: '1.5rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
                 {taskModalMode === 'detail_panitia' && (
                   <div style={{ marginBottom: '2rem' }}>
-                    {selectedTask.current_pic_id === profile.id ? (
-                      <form onSubmit={submitProgress} style={{ background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
-                        <h4 style={{ marginBottom: '1rem' }}>Update Progress</h4>
-                        {formError && <div className="alert alert-error">{formError}</div>}
-                        <div className="form-group">
-                          <label>Progress (%)</label>
-                          <input type="number" min="0" max="100" className="form-control" value={progressFormData.progress} onChange={e => setProgressFormData({...progressFormData, progress: e.target.value})} required />
-                        </div>
-                        <div className="form-group">
-                          <label>Laporan / Catatan</label>
-                          <textarea className="form-control" value={progressFormData.report} onChange={e => setProgressFormData({...progressFormData, report: e.target.value})} rows="2" required></textarea>
-                        </div>
-                        <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Menyimpan...' : 'Submit Progress'}</button>
-                      </form>
-                    ) : (
-                      <div style={{ background: '#f8fafc', padding: '1rem', borderRadius: '8px', textAlign: 'center' }}>
-                        {formError && <div className="alert alert-error">{formError}</div>}
-                        <p style={{ marginBottom: '1rem' }}>Anda bukan PIC aktif untuk task ini.</p>
-                        <button type="button" onClick={handleClaimTask} className="btn btn-primary" disabled={formLoading}>
-                          {selectedTask.current_pic_id ? 'Ambil Alih Tugas' : 'Ambil Tugas'}
-                        </button>
+                    <form onSubmit={submitProgress} style={{ background: '#f8fafc', padding: '1rem', borderRadius: '8px' }}>
+                      <h4 style={{ marginBottom: '1rem' }}>Update Progress</h4>
+                      {formError && <div className="alert alert-error">{formError}</div>}
+                      <div className="form-group">
+                        <label>Tambahan Kontribusi Anda (%)</label>
+                        <input type="number" min="1" max="100" className="form-control" value={progressFormData.progress} onChange={e => setProgressFormData({...progressFormData, progress: e.target.value})} required />
                       </div>
-                    )}
+                      <div className="form-group">
+                        <label>Laporan / Catatan</label>
+                        <textarea className="form-control" value={progressFormData.report} onChange={e => setProgressFormData({...progressFormData, report: e.target.value})} rows="2" required></textarea>
+                      </div>
+                      <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Menyimpan...' : 'Submit Progress'}</button>
+                    </form>
                   </div>
                 )}
 
@@ -780,7 +954,7 @@ export default function Dashboard() {
                         <strong>{log.profiles?.full_name}</strong>
                         <span>{new Date(log.created_at).toLocaleString('id-ID')}</span>
                       </div>
-                      <div style={{ color: 'var(--accent-color)', fontWeight: 'bold', fontSize: '0.85rem' }}>Progress: {log.progress_percent}%</div>
+                      <div style={{ color: 'var(--accent-color)', fontWeight: 'bold', fontSize: '0.85rem' }}>Progress: +{log.progress_percent}% (Total: {log.total_progress_percent || log.progress_percent}%)</div>
                       {log.previous_status && log.new_status && log.previous_status !== log.new_status && (
                         <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Status: {log.previous_status.replace('_', ' ')} &rarr; {log.new_status.replace('_', ' ')}</div>
                       )}
@@ -837,11 +1011,83 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Modal Shift Create */}
+      {isShiftModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2 style={{ marginBottom: '1.5rem' }}>Tambah Jadwal Shift</h2>
+            {formError && <div className="alert alert-error">{formError}</div>}
+            <form onSubmit={handleAddShiftSchedule}>
+              <div className="form-group">
+                <label>Tanggal</label>
+                <input type="date" className="form-control" value={shiftFormData.schedule_date} onChange={e => setShiftFormData({...shiftFormData, schedule_date: e.target.value})} required />
+              </div>
+              <div className="form-group">
+                <label>Pilih Shift</label>
+                <select className="form-control" value={shiftFormData.shift_id} onChange={e => setShiftFormData({...shiftFormData, shift_id: e.target.value})} required>
+                  <option value="">-- Pilih Shift --</option>
+                  {shiftsList.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.start_time.substring(0,5)} - {s.end_time.substring(0,5)})</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+                <button type="button" onClick={() => setIsShiftModalOpen(false)} className="btn btn-primary" style={{ backgroundColor: 'var(--text-secondary)' }}>Batal</button>
+                <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Menyimpan...' : 'Simpan'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Shift Members */}
+      {isMemberModalOpen && selectedSchedule && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '600px' }}>
+            <h2 style={{ marginBottom: '0.5rem' }}>Kelola Panitia Shift</h2>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
+              {new Date(selectedSchedule.schedule_date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} — Shift {selectedSchedule.shifts?.name}
+            </p>
+            {formError && <div className="alert alert-error">{formError}</div>}
+            <form onSubmit={handleUpdateMembers}>
+              <div className="form-group">
+                <label>Pilih Panitia yang Bertugas</label>
+                <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '1rem' }}>
+                  {panitiaList.map(p => (
+                    <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}>
+                      <input 
+                        type="checkbox" 
+                        checked={memberFormData.selectedPanitia.includes(p.id)}
+                        onChange={(e) => {
+                          const isChecked = e.target.checked;
+                          if (isChecked) {
+                            setMemberFormData({...memberFormData, selectedPanitia: [...memberFormData.selectedPanitia, p.id]});
+                          } else {
+                            setMemberFormData({...memberFormData, selectedPanitia: memberFormData.selectedPanitia.filter(id => id !== p.id)});
+                          }
+                        }}
+                        style={{ width: '18px', height: '18px' }}
+                      />
+                      <span style={{ fontWeight: '500', color: '#1e293b' }}>{p.full_name}</span>
+                    </label>
+                  ))}
+                  {panitiaList.length === 0 && <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Belum ada data panitia.</p>}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+                <button type="button" onClick={() => setIsMemberModalOpen(false)} className="btn btn-primary" style={{ backgroundColor: 'var(--text-secondary)' }}>Batal</button>
+                <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Menyimpan...' : 'Simpan Assignment'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {/* Modal Phase 7B: Station */}
       {isStationModalOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
-            <h2 style={{ marginBottom: '1.5rem' }}>Register Kiosk Station Baru</h2>
+            <h2 style={{ marginBottom: '1.5rem' }}>{pairingResult?.is_repair ? 'Pairing Code (Re-Pair)' : 'Register Kiosk Station Baru'}</h2>
             {formError && <div className="alert alert-error">{formError}</div>}
             {pairingResult ? (
               <div style={{ textAlign: 'center', padding: '2rem' }}>

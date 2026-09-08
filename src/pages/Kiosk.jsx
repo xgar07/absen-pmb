@@ -93,7 +93,17 @@ export default function Kiosk() {
       const { data: challengeData, error: challengeError } = await supabase.functions.invoke('kiosk-auth', {
         body: { action: 'challenge', station_id: stationId }
       });
-      if (challengeError || !challengeData?.success) throw new Error('Station dinonaktifkan atau dihapus');
+      
+      if (challengeError) {
+        // Try to extract specific error from Edge Function response
+        let msg = 'AKSES DITOLAK / DISABLED';
+        if (challengeError.message?.includes('dinonaktifkan')) msg = 'STATION DINONAKTIFKAN';
+        if (challengeError.message?.includes('pair ulang')) msg = 'STATION PERLU DI-PAIR ULANG';
+        throw new Error(msg);
+      }
+      if (!challengeData?.success) {
+        throw new Error(challengeData?.error || 'AKSES DITOLAK / DISABLED');
+      }
 
       const dataBuffer = new TextEncoder().encode(challengeData.challenge);
       const signatureBuffer = await window.crypto.subtle.sign(
@@ -122,7 +132,7 @@ export default function Kiosk() {
       }
     } catch (err) {
       console.error(err);
-      setStatus('NOT AUTHORIZED');
+      setStatus(err.message || 'NOT AUTHORIZED');
       setTokens([]);
     } finally {
       fetchingRef.current = false;
@@ -287,10 +297,23 @@ export default function Kiosk() {
                   </div>
                 </>
               ) : (
-                <div style={{ width: 400, height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '4px dashed #cbd5e1', borderRadius: '16px', backgroundColor: '#f8fafc' }}>
-                  <p style={{ color: status === 'NOT AUTHORIZED' ? '#ef4444' : '#94a3b8', fontWeight: 'bold', textAlign: 'center', fontSize: '1.2rem' }}>
-                    {status === 'NOT AUTHORIZED' ? 'AKSES DITOLAK / DISABLED' : status}
+                <div style={{ width: 400, height: 400, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '4px dashed #cbd5e1', borderRadius: '16px', backgroundColor: '#f8fafc', padding: '2rem', textAlign: 'center' }}>
+                  <p style={{ color: status.includes('PAIR ULANG') ? '#f59e0b' : '#ef4444', fontWeight: 'bold', fontSize: '1.2rem', marginBottom: '1rem' }}>
+                    {status === 'STATION DINONAKTIFKAN' ? 'STATION DINONAKTIFKAN' : (status === 'STATION PERLU DI-PAIR ULANG' ? 'STATION PERLU DI-PAIR ULANG' : 'AKSES DITOLAK / DISABLED')}
                   </p>
+                  
+                  {status === 'STATION DINONAKTIFKAN' && (
+                    <p style={{ color: '#64748b', fontSize: '1rem' }}>Kiosk ini sedang tidak diizinkan untuk digunakan.<br/><br/>Hubungi Dosen/PJ.</p>
+                  )}
+                  
+                  {status === 'STATION PERLU DI-PAIR ULANG' && (
+                    <>
+                      <p style={{ color: '#64748b', fontSize: '1rem', marginBottom: '1.5rem' }}>Credential Kiosk ini telah direset oleh administrator.<br/><br/>Silakan minta Pairing Code dari Dosen.</p>
+                      <button onClick={unpairDevice} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                        PAIR ULANG
+                      </button>
+                    </>
+                  )}
                 </div>
               )}
             </div>

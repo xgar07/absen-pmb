@@ -27,7 +27,7 @@ create or replace function public.submit_attendance(qr_token text, p_reason text
 returns json
 language plpgsql
 security definer
-set search_path = public
+set search_path = public, extensions
 as $$
 declare
   v_secret constant text := 'SANGAT_RAHASIA_UBAH_DI_PROD_12345';

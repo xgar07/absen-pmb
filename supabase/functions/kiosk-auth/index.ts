@@ -78,8 +78,22 @@ serve(async (req: Request) => {
         .eq('id', station_id)
         .single()
 
-      if (stationError || !station || !station.is_active || !station.public_key) {
-        return new Response(JSON.stringify({ error: 'Station tidak aktif atau tidak ditemukan' }), {
+      if (stationError || !station) {
+        return new Response(JSON.stringify({ error: 'Station tidak ditemukan' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      
+      if (!station.is_active) {
+        return new Response(JSON.stringify({ error: 'Station dinonaktifkan' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      
+      if (!station.public_key) {
+        return new Response(JSON.stringify({ error: 'Station perlu di-pair ulang' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
@@ -142,8 +156,20 @@ serve(async (req: Request) => {
         .eq('id', station_id)
         .single()
       
-      if (stationError || !station || !station.is_active || !station.public_key) {
-        return new Response(JSON.stringify({ error: 'Station inactive or not found' }), {
+      if (stationError || !station) {
+        return new Response(JSON.stringify({ error: 'Station tidak ditemukan' }), {
+          status: 404,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      if (!station.is_active) {
+        return new Response(JSON.stringify({ error: 'Station dinonaktifkan' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      if (!station.public_key) {
+        return new Response(JSON.stringify({ error: 'Station perlu di-pair ulang' }), {
           status: 403,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
