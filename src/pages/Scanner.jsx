@@ -114,27 +114,29 @@ export default function Scanner() {
     setSuccess(null);
     setScanStatus('Mengulang...');
     
-    // Start scanner again
+    // Instead of window.location.reload(), just restart the scanner via state or navigate
+    // navigate(0) safely reloads the React Router state without a hard browser reload in some setups,
+    // but the safest SPA way to re-mount the scanner is to clear the instance or let the useEffect handle it.
+    // For a minimal fix, we'll force a clean remount by navigating to the same route:
+    navigate('/scan', { replace: true });
+    
+    // Jika scanner gagal start kembali, kita juga bisa me-reload komponen secara logis
     if (scannerInstance && !scannerInstance.isScanning) {
       scannerInstance.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         async (decodedText) => {
-          // Stop scanner immediately on success
           if (scannerInstance.isScanning) {
             await scannerInstance.stop();
             setIsScanning(false);
           }
-          // The effect above will handle the submission, but wait, the effect's onScanSuccess closure might be stale.
-          // Better to just reload the page or navigate back to /scan
-          window.location.reload();
+          // Hindari window.location.reload()
+          navigate('/scan', { replace: true });
         },
         () => {}
       ).catch(err => {
         setError('AKSES KAMERA DITOLAK');
       });
-    } else {
-      window.location.reload();
     }
   };
 
@@ -143,7 +145,7 @@ export default function Scanner() {
       <nav className="navbar">
         <div className="container">
           <div className="navbar-brand">Scan Absensi</div>
-          <button onClick={() => navigate('/')} className="btn-logout" style={{ color: 'var(--primary-color)' }}>Kembali</button>
+          <button type="button" onClick={() => navigate('/')} className="btn-logout" style={{ color: 'var(--primary-color)' }}>Kembali</button>
         </div>
       </nav>
 
@@ -173,8 +175,8 @@ export default function Scanner() {
 
         {(error || success) && (
           <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem' }}>
-            <button onClick={() => navigate('/')} className="btn btn-primary" style={{ backgroundColor: '#64748b' }}>Kembali ke Dashboard</button>
-            <button onClick={handleRetry} className="btn btn-primary">Scan Ulang</button>
+            <button type="button" onClick={() => navigate('/')} className="btn btn-primary" style={{ backgroundColor: '#64748b' }}>Kembali ke Dashboard</button>
+            <button type="button" onClick={handleRetry} className="btn btn-primary">Scan Ulang</button>
           </div>
         )}
       </main>
