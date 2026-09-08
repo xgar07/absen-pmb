@@ -17,6 +17,13 @@ export default function Scanner() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) {
         navigate('/login');
+        return;
+      }
+      const { data: profile } = await supabase.from('profiles').select('is_active').eq('id', user.id).single();
+      if (profile && profile.is_active === false) {
+        await supabase.auth.signOut();
+        window.alert('Akun Anda sedang dinonaktifkan oleh administrator.');
+        navigate('/login');
       }
     };
     checkAuth();

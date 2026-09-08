@@ -4,7 +4,6 @@ import { supabase } from './lib/supabaseClient';
 
 // Pages
 import Login from './pages/Login';
-import Register from './pages/Register';
 import Dashboard from './pages/Dashboard';
 import Kiosk from './pages/Kiosk';
 import Scanner from './pages/Scanner';
@@ -38,10 +37,6 @@ function App() {
         <Route 
           path="/login" 
           element={!session ? <Login /> : <Navigate to="/" replace />} 
-        />
-        <Route 
-          path="/register" 
-          element={!session ? <Register /> : <Navigate to="/" replace />} 
         />
         <Route 
           path="/kiosk" 

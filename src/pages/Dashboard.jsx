@@ -28,6 +28,13 @@ export default function Dashboard() {
   const [taskFormData, setTaskFormData] = useState({ title: '', description: '', deadline: '' });
   const [progressFormData, setProgressFormData] = useState({ progress: 0, report: '' });
 
+  // Phase F States
+  const [isPanitiaModalOpen, setIsPanitiaModalOpen] = useState(false);
+  const [panitiaModalMode, setPanitiaModalMode] = useState('create');
+  const [panitiaFormData, setPanitiaFormData] = useState({ nama: '', nim: '', username: '', password: '' });
+  const [selectedPanitia, setSelectedPanitia] = useState(null);
+  const [showInactive, setShowInactive] = useState(false);
+
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
@@ -51,6 +58,14 @@ export default function Dashboard() {
       }
 
       if (profileError) throw profileError;
+      
+      if (profileData.is_active === false) {
+        await supabase.auth.signOut();
+        window.alert('Akun Anda sedang dinonaktifkan oleh administrator.');
+        navigate('/login');
+        return;
+      }
+
       setProfile(profileData);
 
       const bounds = getJakartaDayBounds();
@@ -71,7 +86,7 @@ export default function Dashboard() {
       else if (profileData.role === 'dosen') {
         // Monitoring
         const [profilesRes, attendancesRes] = await Promise.all([
-          supabase.from('profiles').select('id, full_name').eq('role', 'panitia'),
+          supabase.from('profiles').select('id, full_name, username, nim, is_active').eq('role', 'panitia'),
           supabase.from('attendance').select('*').gte('waktu_absen', bounds.start).lt('waktu_absen', bounds.end)
         ]);
         
@@ -223,6 +238,72 @@ export default function Dashboard() {
     fetchDashboardData();
   };
 
+  // ============================
+  // PHASE F: PANITIA MANAGEMENT
+  // ============================
+  const openCreatePanitiaModal = () => {
+    setPanitiaModalMode('create');
+    setPanitiaFormData({ nama: '', nim: '', username: '', password: '' });
+    setFormError(''); setIsPanitiaModalOpen(true);
+  };
+
+  const openResetPasswordModal = (panitia) => {
+    setPanitiaModalMode('reset');
+    setSelectedPanitia(panitia);
+    setPanitiaFormData({ nama: '', nim: '', username: panitia.username || '', password: '' });
+    setFormError(''); setIsPanitiaModalOpen(true);
+  };
+
+  const submitPanitia = async (e) => {
+    e.preventDefault(); setFormError(''); setFormLoading(true);
+    try {
+      // Dapatkan session JWT aktif untuk header request (opsional, tapi supabase.functions.invoke otomatis mengirim auth token)
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+      if (sessionError || !session) throw new Error('Sesi tidak valid. Silakan login kembali.');
+
+      if (panitiaModalMode === 'create') {
+        const { data, error } = await supabase.functions.invoke('auth-admin', {
+          body: {
+            action: 'create',
+            username: panitiaFormData.username,
+            password: panitiaFormData.password,
+            nama: panitiaFormData.nama,
+            nim: panitiaFormData.nim
+          }
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || data?.message || 'Gagal membuat akun');
+      } else {
+        const { data, error } = await supabase.functions.invoke('auth-admin', {
+          body: {
+            action: 'reset_password',
+            user_id: selectedPanitia.id,
+            password: panitiaFormData.password
+          }
+        });
+        if (error) throw error;
+        if (!data?.success) throw new Error(data?.error || data?.message || 'Gagal mereset password');
+      }
+      setIsPanitiaModalOpen(false); fetchDashboardData();
+    } catch (err) { setFormError(err.message || 'Terjadi kesalahan pada server'); } finally { setFormLoading(false); }
+  };
+
+  const handleToggleActive = async (panitia) => {
+    const actionText = panitia.is_active ? 'Nonaktifkan' : 'Aktifkan';
+    if (!window.confirm(`${actionText} akun ${panitia.full_name}? ${panitia.is_active ? 'Akun tidak dapat login, tetapi seluruh riwayat tetap disimpan.' : ''}`)) return;
+    
+    try {
+      const { data, error } = await supabase.functions.invoke('auth-admin', {
+        body: { action: 'set_active', user_id: panitia.id, is_active: !panitia.is_active }
+      });
+      if (error) throw error;
+      if (!data?.success) throw new Error(data?.error || data?.message);
+      fetchDashboardData();
+    } catch (err) {
+      window.alert(err.message || 'Terjadi kesalahan pada server');
+    }
+  };
+
   // Formatting helpers
   const formatDate = (dateStr) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(new Date(dateStr));
   const formatTime = (timeStr) => timeStr.substring(0, 5) + ' WIB';
@@ -297,6 +378,47 @@ export default function Dashboard() {
                     </div>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* Phase F: MANAJEMEN PANITIA */}
+            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+              <div className="event-header">
+                <h2>MANAJEMEN PANITIA</h2>
+                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                  <label style={{ fontSize: '0.9rem', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} style={{ marginRight: '0.5rem' }} />
+                    Tampilkan Panitia Nonaktif
+                  </label>
+                  <button type="button" onClick={openCreatePanitiaModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Panitia</button>
+                </div>
+              </div>
+              <div className="table-responsive">
+                <table className="monitoring-table">
+                  <thead><tr><th>Nama</th><th>Username</th><th>NIM</th><th>Status</th><th>Aksi</th></tr></thead>
+                  <tbody>
+                    {panitiaList.filter(p => showInactive || p.is_active !== false).map(panitia => (
+                      <tr key={panitia.id}>
+                        <td>{panitia.full_name}</td>
+                        <td>{panitia.username || '-'}</td>
+                        <td>{panitia.nim || '-'}</td>
+                        <td>
+                          {panitia.is_active === false ? <span style={{ color: 'var(--error-color)', fontWeight: 'bold' }}>○ NONAKTIF</span> : <span style={{ color: 'var(--success-color, #10b981)', fontWeight: 'bold' }}>● AKTIF</span>}
+                        </td>
+                        <td>
+                          {panitia.username && (
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                              <button type="button" onClick={() => openResetPasswordModal(panitia)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--accent-color)', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>Reset Password</button>
+                              <button type="button" onClick={() => handleToggleActive(panitia)} className="btn btn-primary btn-small" style={{ backgroundColor: panitia.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+                                {panitia.is_active ? 'Nonaktifkan' : 'Aktifkan'}
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
 
@@ -521,6 +643,42 @@ export default function Dashboard() {
               </>
             )}
 
+          </div>
+        </div>
+      )}
+
+      {/* Modal Phase F: Panitia Management */}
+      {isPanitiaModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2 style={{ marginBottom: '1.5rem' }}>{panitiaModalMode === 'create' ? 'Tambah Akun Panitia' : `Reset Password: ${selectedPanitia?.full_name}`}</h2>
+            {formError && <div className="alert alert-error">{formError}</div>}
+            <form onSubmit={submitPanitia}>
+              {panitiaModalMode === 'create' && (
+                <>
+                  <div className="form-group">
+                    <label>Nama Lengkap</label>
+                    <input type="text" className="form-control" value={panitiaFormData.nama} onChange={e => setPanitiaFormData({...panitiaFormData, nama: e.target.value})} required />
+                  </div>
+                  <div className="form-group">
+                    <label>NIM</label>
+                    <input type="text" className="form-control" value={panitiaFormData.nim} onChange={e => setPanitiaFormData({...panitiaFormData, nim: e.target.value})} required />
+                  </div>
+                  <div className="form-group">
+                    <label>Username (ID Login)</label>
+                    <input type="text" className="form-control" value={panitiaFormData.username} onChange={e => setPanitiaFormData({...panitiaFormData, username: e.target.value})} required />
+                  </div>
+                </>
+              )}
+              <div className="form-group">
+                <label>{panitiaModalMode === 'create' ? 'Password Awal' : 'Password Baru'}</label>
+                <input type="password" minLength="6" className="form-control" value={panitiaFormData.password} onChange={e => setPanitiaFormData({...panitiaFormData, password: e.target.value})} required />
+              </div>
+              <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+                <button type="button" onClick={() => setIsPanitiaModalOpen(false)} className="btn btn-primary" style={{ backgroundColor: 'var(--text-secondary)' }}>Batal</button>
+                <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Menyimpan...' : 'Simpan'}</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
