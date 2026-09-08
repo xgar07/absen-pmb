@@ -51,7 +51,7 @@ export default function Scanner() {
       });
       
       if (rpcError) {
-        throw new Error('GAGAL TERHUBUNG KE SERVER');
+        throw new Error(`GAGAL TERHUBUNG KE SERVER: ${rpcError.message || rpcError.details || JSON.stringify(rpcError)}`);
       }
 
       if (data && data.success) {
