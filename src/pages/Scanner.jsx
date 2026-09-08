@@ -11,6 +11,12 @@ export default function Scanner() {
   const [success, setSuccess] = useState(null);
   const [scannerInstance, setScannerInstance] = useState(null);
 
+  // Late Reason State
+  const [isLate, setIsLate] = useState(false);
+  const [lateReason, setLateReason] = useState('');
+  const [scannedToken, setScannedToken] = useState(null);
+  const [isSubmittingReason, setIsSubmittingReason] = useState(false);
+
   useEffect(() => {
     // Check if user is authenticated and is panitia
     const checkAuth = async () => {
@@ -37,6 +43,48 @@ export default function Scanner() {
     }
   }, [scannerInstance]);
 
+  const submitToken = async (token, reason = null) => {
+    try {
+      const { data, error: rpcError } = await supabase.rpc('submit_attendance', { 
+        qr_token: token,
+        p_reason: reason
+      });
+      
+      if (rpcError) {
+        throw new Error('GAGAL TERHUBUNG KE SERVER');
+      }
+
+      if (data && data.success) {
+        setSuccess(data.message);
+        setScanStatus('Selesai');
+        setIsLate(false);
+        setError(null);
+      } else {
+        const errorCode = data?.error;
+        if (errorCode === 'LATE_REASON_REQUIRED') {
+           setIsLate(true);
+           setScannedToken(token);
+           setError(data.message);
+           setScanStatus('Menunggu Keterangan');
+           return;
+        }
+
+        let uiError = 'QR TIDAK VALID';
+        if (errorCode === 'FUTURE_TOKEN') uiError = 'QR BELUM AKTIF';
+        if (errorCode === 'EXPIRED_TOKEN') uiError = 'QR KADALUARSA';
+        if (errorCode === 'DUPLICATE') uiError = 'ANDA SUDAH ABSEN';
+        if (errorCode === 'INVALID_SIGNATURE' || errorCode === 'INVALID_PAYLOAD' || errorCode === 'INVALID_FORMAT') uiError = 'QR TIDAK VALID';
+        if (errorCode === 'UNAUTHORIZED' || errorCode === 'FORBIDDEN') uiError = 'AKSES DITOLAK';
+        
+        setError(uiError);
+        setScanStatus('Gagal');
+      }
+    } catch (err) {
+      setError(err.message || 'GAGAL TERHUBUNG KE SERVER');
+      setScanStatus('Gagal');
+    }
+  };
+
   useEffect(() => {
     if (!scannerInstance) return;
 
@@ -56,34 +104,7 @@ export default function Scanner() {
 
       setScanStatus('Memverifikasi...');
       setError(null);
-
-      try {
-        const { data, error: rpcError } = await supabase.rpc('submit_attendance', { qr_token: decodedText });
-        
-        if (rpcError) {
-          throw new Error('GAGAL TERHUBUNG KE SERVER');
-        }
-
-        if (data && data.success) {
-          setSuccess(data.message);
-          setScanStatus('Selesai');
-        } else {
-          // Map error code to UI messages
-          const errorCode = data?.error;
-          let uiError = 'QR TIDAK VALID';
-          if (errorCode === 'FUTURE_TOKEN') uiError = 'QR BELUM AKTIF';
-          if (errorCode === 'EXPIRED_TOKEN') uiError = 'QR KADALUARSA';
-          if (errorCode === 'DUPLICATE') uiError = 'ANDA SUDAH ABSEN';
-          if (errorCode === 'INVALID_SIGNATURE' || errorCode === 'INVALID_PAYLOAD' || errorCode === 'INVALID_FORMAT') uiError = 'QR TIDAK VALID';
-          if (errorCode === 'UNAUTHORIZED' || errorCode === 'FORBIDDEN') uiError = 'AKSES DITOLAK';
-          
-          setError(uiError);
-          setScanStatus('Gagal');
-        }
-      } catch (err) {
-        setError(err.message || 'GAGAL TERHUBUNG KE SERVER');
-        setScanStatus('Gagal');
-      }
+      await submitToken(decodedText);
     };
 
     const startScanner = async () => {
@@ -119,15 +140,12 @@ export default function Scanner() {
   const handleRetry = () => {
     setError(null);
     setSuccess(null);
+    setIsLate(false);
+    setLateReason('');
+    setScannedToken(null);
     setScanStatus('Mengulang...');
-    
-    // Instead of window.location.reload(), just restart the scanner via state or navigate
-    // navigate(0) safely reloads the React Router state without a hard browser reload in some setups,
-    // but the safest SPA way to re-mount the scanner is to clear the instance or let the useEffect handle it.
-    // For a minimal fix, we'll force a clean remount by navigating to the same route:
     navigate('/scan', { replace: true });
     
-    // Jika scanner gagal start kembali, kita juga bisa me-reload komponen secara logis
     if (scannerInstance && !scannerInstance.isScanning) {
       scannerInstance.start(
         { facingMode: "environment" },
@@ -137,7 +155,6 @@ export default function Scanner() {
             await scannerInstance.stop();
             setIsScanning(false);
           }
-          // Hindari window.location.reload()
           navigate('/scan', { replace: true });
         },
         () => {}
@@ -145,6 +162,14 @@ export default function Scanner() {
         setError('AKSES KAMERA DITOLAK');
       });
     }
+  };
+
+  const handleSubmitReason = async (e) => {
+    e.preventDefault();
+    if (!lateReason.trim()) return;
+    setIsSubmittingReason(true);
+    await submitToken(scannedToken, lateReason);
+    setIsSubmittingReason(false);
   };
 
   return (
@@ -159,7 +184,7 @@ export default function Scanner() {
       <main className="dashboard-content container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
         <h2 style={{ marginBottom: '1.5rem' }}>Arahkan Kamera ke QR</h2>
         
-        {error && (
+        {error && !isLate && (
           <div className="alert alert-error text-center" style={{ width: '100%', maxWidth: '400px' }}>
             <strong>{error}</strong>
           </div>
@@ -171,16 +196,46 @@ export default function Scanner() {
           </div>
         )}
 
-        <div style={{ position: 'relative', width: '100%', maxWidth: '400px', backgroundColor: '#000', borderRadius: '12px', overflow: 'hidden' }}>
-          <div id="reader" style={{ width: '100%', minHeight: '300px' }}></div>
-          {!isScanning && scanStatus !== 'Selesai' && !error && (
-            <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white' }}>
-              <p>{scanStatus}</p>
-            </div>
-          )}
-        </div>
+        {isLate ? (
+          <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'white', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', borderTop: '4px solid #f59e0b' }}>
+            <h3 style={{ color: '#d97706', marginBottom: '1rem', textAlign: 'center' }}>Anda Terlambat</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>
+              Batas toleransi keterlambatan telah lewat. Mohon isi keterangan/alasan singkat untuk dapat melanjutkan absen.
+            </p>
+            <form onSubmit={handleSubmitReason}>
+              <div className="form-group">
+                <label>Alasan Keterlambatan</label>
+                <textarea 
+                  className="form-control" 
+                  rows="3" 
+                  value={lateReason}
+                  onChange={(e) => setLateReason(e.target.value)}
+                  placeholder="Contoh: Macet di perjalanan, dll."
+                  required
+                ></textarea>
+              </div>
+              <button 
+                type="submit" 
+                className="btn btn-primary" 
+                style={{ width: '100%', marginTop: '1rem', backgroundColor: '#f59e0b' }}
+                disabled={isSubmittingReason || !lateReason.trim()}
+              >
+                {isSubmittingReason ? 'Menyimpan...' : 'Submit Keterangan'}
+              </button>
+            </form>
+          </div>
+        ) : (
+          <div style={{ position: 'relative', width: '100%', maxWidth: '400px', backgroundColor: '#000', borderRadius: '12px', overflow: 'hidden' }}>
+            <div id="reader" style={{ width: '100%', minHeight: '300px' }}></div>
+            {!isScanning && scanStatus !== 'Selesai' && !error && (
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.5)', color: 'white' }}>
+                <p>{scanStatus}</p>
+              </div>
+            )}
+          </div>
+        )}
 
-        {(error || success) && (
+        {(error || success) && !isLate && (
           <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem' }}>
             <button type="button" onClick={() => navigate('/')} className="btn btn-primary" style={{ backgroundColor: '#64748b' }}>Kembali ke Dashboard</button>
             <button type="button" onClick={handleRetry} className="btn btn-primary">Scan Ulang</button>

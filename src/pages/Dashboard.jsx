@@ -26,6 +26,9 @@ export default function Dashboard() {
   const [selectedTask, setSelectedTask] = useState(null);
   const [taskLogs, setTaskLogs] = useState([]);
   const [taskFormData, setTaskFormData] = useState({ title: '', description: '', deadline: '' });
+  const [myActivityTasks, setMyActivityTasks] = useState([]);
+  const [attendanceHistory, setAttendanceHistory] = useState([]);
+  const [taskHistoryLogs, setTaskHistoryLogs] = useState([]);
   const [progressFormData, setProgressFormData] = useState({ progress: 0, report: '' });
 
   // Phase F States
@@ -80,7 +83,17 @@ export default function Dashboard() {
         setEvents(eventsData || []);
 
         // Tasks (Phase E) - Panitia sees all
-        const { data: tasksData } = await supabase.from('tasks').select('*, profiles:current_pic_id(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+        const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').neq('status', 'completed').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+
+        // Priority 4: Tasks I Interacted With
+        const { data: interactedTasksData } = await supabase.from('task_progress_logs').select('task_id').eq('user_id', user.id);
+        const interactedIds = [...new Set((interactedTasksData || []).map(log => log.task_id))];
+        if (interactedIds.length > 0) {
+          const { data: myActivityTasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').in('id', interactedIds).order('updated_at', { ascending: false });
+          setMyActivityTasks(myActivityTasksData || []);
+        } else {
+          setMyActivityTasks([]);
+        }
         setTasks(tasksData || []);
       } 
       else if (profileData.role === 'dosen') {
@@ -107,7 +120,15 @@ export default function Dashboard() {
         setEvents(eventsData || []);
 
         // Tasks (Phase E) - Dosen sees own
-        const { data: tasksData } = await supabase.from('tasks').select('*, profiles:current_pic_id(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+        const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+
+        // Priority 3: History for Dosen
+        const [allAttRes, allLogsRes] = await Promise.all([
+          supabase.from('attendance').select('*, profiles:panitia_id(full_name)').order('waktu_absen', { ascending: false }).limit(100),
+          supabase.from('task_progress_logs').select('*, tasks:task_id(title, status, created_at), profiles:user_id(full_name)').order('created_at', { ascending: false }).limit(200)
+        ]);
+        setAttendanceHistory(allAttRes.data || []);
+        setTaskHistoryLogs(allLogsRes.data || []);
         setTasks(tasksData || []);
       }
     } catch (error) {
@@ -344,7 +365,7 @@ export default function Dashboard() {
                     <p className="task-desc">{task.description}</p>
                     <div className="task-meta">
                       <span>📅 Deadline: {formatDate(task.deadline)}</span>
-                      <span>👤 PIC: {task.profiles?.full_name || 'Belum ada PIC'}</span>
+                      <span>👤 Terakhir Diupdate: {task.profiles?.full_name || 'Belum ada'}</span>
                     </div>
                     <div className="progress-container"><div className="progress-bar" style={{ width: `${task.progress_percent}%` }}></div></div>
                     <span style={{ fontSize: '0.8rem', textAlign: 'right' }}>{task.progress_percent}%</span>
@@ -422,18 +443,87 @@ export default function Dashboard() {
               </div>
             </div>
 
+            {/* Phase E: RIWAYAT TUGAS */}
+            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+              <div className="event-header">
+                <h2>RIWAYAT TUGAS (AUDIT LOG)</h2>
+              </div>
+              <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
+                {taskHistoryLogs.map(log => {
+                  const createdDate = new Date(log.tasks?.created_at || log.created_at);
+                  const isOldIncomplete = log.tasks?.status !== 'completed' && createdDate < new Date(new Date().setHours(0,0,0,0));
+                  return (
+                    <div key={log.id} className="history-item" style={{ borderLeftColor: isOldIncomplete ? '#ef4444' : '#3b82f6', backgroundColor: isOldIncomplete ? '#fef2f2' : 'transparent', padding: isOldIncomplete ? '0.5rem 1rem' : '0 0 0 1rem', borderRadius: '0 8px 8px 0', marginBottom: '1rem' }}>
+                      <div className="history-meta" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <div>
+                          <strong style={{ color: 'var(--primary-color)' }}>{log.profiles?.full_name}</strong>
+                          <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}>mengupdate task: <strong>{log.tasks?.title}</strong></span>
+                        </div>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(log.created_at).toLocaleString('id-ID')}</span>
+                      </div>
+                      {isOldIncomplete && <div style={{ color: '#ef4444', fontSize: '0.8rem', fontWeight: 'bold', marginTop: '0.25rem' }}>⚠️ Tugas lintas hari belum selesai</div>}
+                      {log.previous_status && log.new_status && log.previous_status !== log.new_status && (
+                        <div style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>Status: {log.previous_status.replace('_', ' ')} &rarr; <strong>{log.new_status.replace('_', ' ')}</strong></div>
+                      )}
+                      <p className="history-report" style={{ marginTop: '0.5rem' }}>Catatan: "{log.report}"</p>
+                    </div>
+                  );
+                })}
+                {taskHistoryLogs.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada riwayat update task.</p>}
+              </div>
+            </div>
+
+            {/* RIWAYAT ABSENSI */}
+            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+              <div className="event-header">
+                <h2>RIWAYAT ABSENSI KESELURUHAN</h2>
+              </div>
+              <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                <table className="monitoring-table">
+                  <thead><tr><th>Tanggal & Waktu</th><th>Nama Panitia</th><th>Status</th><th>Keterangan</th></tr></thead>
+                  <tbody>
+                    {attendanceHistory.map(row => (
+                      <tr key={row.id}>
+                        <td>{new Date(row.waktu_absen).toLocaleString('id-ID')} WIB</td>
+                        <td>{row.profiles?.full_name || 'Unknown'}</td>
+                        <td>
+                          {row.late_status === 'terlambat' ? 
+                            <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
+                            <span className="badge-hadir">Tepat Waktu</span>
+                          }
+                        </td>
+                        <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>{row.late_reason || '-'}</td>
+                      </tr>
+                    ))}
+                    {attendanceHistory.length === 0 && <tr><td colSpan="4" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
             {/* Phase C: MONITORING */}
             <h2 style={{ marginBottom: '1rem' }}>MONITORING ABSENSI HARI INI</h2>
             {monitoringData && (
               <div className="table-responsive">
                 <table className="monitoring-table">
-                  <thead><tr><th>Nama Panitia</th><th>Waktu Absen (WIB)</th><th>Status</th></tr></thead>
+                  <thead><tr><th>Nama Panitia</th><th>Waktu Absen (WIB)</th><th>Status</th><th>Keterangan</th></tr></thead>
                   <tbody>
                     {monitoringData.map(row => (
                       <tr key={row.id}>
                         <td>{row.full_name}</td>
                         <td>{row.attendance ? formatTimeWIB(row.attendance.waktu_absen) : '-'}</td>
-                        <td><span className={row.attendance ? 'badge-hadir' : 'badge-belum'}>{row.attendance ? 'Hadir' : 'Belum Absen'}</span></td>
+                        <td>
+                          {row.attendance ? (
+                            row.attendance.late_status === 'terlambat' ? 
+                              <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
+                              <span className="badge-hadir">Tepat Waktu</span>
+                          ) : (
+                            <span className="badge-belum">Belum Absen</span>
+                          )}
+                        </td>
+                        <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>
+                          {row.attendance?.late_reason || '-'}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -479,7 +569,7 @@ export default function Dashboard() {
                       <p className="task-desc">{task.description}</p>
                       <div className="task-meta">
                         <span>📅 {formatDate(task.deadline)}</span>
-                        <span>👤 {task.profiles?.full_name || 'Belum ada PIC'}</span>
+                        <span>👤 {task.profiles?.full_name || 'Belum ada'}</span>
                       </div>
                       <div className="progress-container"><div className="progress-bar" style={{ width: `${task.progress_percent}%` }}></div></div>
                       <span style={{ fontSize: '0.8rem', textAlign: 'right' }}>{task.progress_percent}%</span>
@@ -589,7 +679,7 @@ export default function Dashboard() {
                 <span className={`task-status status-${selectedTask.status}`}>{selectedTask.status.replace('_', ' ')}</span>
                 <p style={{ marginTop: '1rem', color: 'var(--text-secondary)' }}>{selectedTask.description}</p>
                 <p style={{ fontSize: '0.9rem', marginTop: '0.5rem' }}><strong>Deadline:</strong> {formatDate(selectedTask.deadline)}</p>
-                <p style={{ fontSize: '0.9rem' }}><strong>PIC Aktif:</strong> {selectedTask.profiles?.full_name || 'Belum ada PIC'}</p>
+                <p style={{ fontSize: '0.9rem' }}><strong>PIC Aktif:</strong> {selectedTask.profiles?.full_name || 'Belum ada'}</p>
 
                 <div style={{ margin: '1.5rem 0', borderTop: '1px solid var(--border-color)' }}></div>
 
@@ -630,6 +720,9 @@ export default function Dashboard() {
                         <span>{new Date(log.created_at).toLocaleString('id-ID')}</span>
                       </div>
                       <div style={{ color: 'var(--accent-color)', fontWeight: 'bold', fontSize: '0.85rem' }}>Progress: {log.progress_percent}%</div>
+                      {log.previous_status && log.new_status && log.previous_status !== log.new_status && (
+                        <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>Status: {log.previous_status.replace('_', ' ')} &rarr; {log.new_status.replace('_', ' ')}</div>
+                      )}
                       <p className="history-report">{log.report}</p>
                     </div>
                   )) : (
