@@ -38,6 +38,12 @@ export default function Dashboard() {
   const [selectedPanitia, setSelectedPanitia] = useState(null);
   const [showInactive, setShowInactive] = useState(false);
 
+  // Phase 7B States
+  const [stationsList, setStationsList] = useState([]);
+  const [isStationModalOpen, setIsStationModalOpen] = useState(false);
+  const [stationFormData, setStationFormData] = useState({ name: '' });
+  const [pairingResult, setPairingResult] = useState(null);
+
   const [formError, setFormError] = useState('');
   const [formLoading, setFormLoading] = useState(false);
 
@@ -98,10 +104,15 @@ export default function Dashboard() {
       } 
       else if (profileData.role === 'dosen') {
         // Monitoring
-        const [profilesRes, attendancesRes] = await Promise.all([
+        const [profilesRes, attendancesRes, stationsRes] = await Promise.all([
           supabase.from('profiles').select('id, full_name, username, nim, is_active').eq('role', 'panitia'),
-          supabase.from('attendance').select('*').gte('waktu_absen', bounds.start).lt('waktu_absen', bounds.end)
+          supabase.from('attendance').select('*').gte('waktu_absen', bounds.start).lt('waktu_absen', bounds.end),
+          supabase.from('attendance_stations').select('*').order('created_at', { ascending: false })
         ]);
+        
+        if (stationsRes.data) {
+          setStationsList(stationsRes.data);
+        }
         
         if (profilesRes.data) {
           const sortedProfiles = [...profilesRes.data].sort((a, b) => a.full_name.localeCompare(b.full_name));
@@ -278,7 +289,6 @@ export default function Dashboard() {
   const submitPanitia = async (e) => {
     e.preventDefault(); setFormError(''); setFormLoading(true);
     try {
-      // Dapatkan session JWT aktif untuk header request (opsional, tapi supabase.functions.invoke otomatis mengirim auth token)
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
       if (sessionError || !session) throw new Error('Sesi tidak valid. Silakan login kembali.');
 
@@ -323,6 +333,28 @@ export default function Dashboard() {
     } catch (err) {
       window.alert(err.message || 'Terjadi kesalahan pada server');
     }
+  };
+
+  // ============================
+  // PHASE 7B: KIOSK MANAGEMENT
+  // ============================
+  const submitStation = async (e) => {
+    e.preventDefault(); setFormError(''); setFormLoading(true); setPairingResult(null);
+    try {
+      const { data, error } = await supabase.rpc('create_kiosk_pairing', { p_name: stationFormData.name });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      setPairingResult(data);
+      fetchDashboardData();
+    } catch (err) { setFormError(err.message); } finally { setFormLoading(false); }
+  };
+
+  const handleToggleStation = async (station) => {
+    try {
+      const { error } = await supabase.from('attendance_stations').update({ is_active: !station.is_active }).eq('id', station.id);
+      if (error) throw error;
+      fetchDashboardData();
+    } catch (err) { window.alert(err.message); }
   };
 
   // Formatting helpers
@@ -438,6 +470,35 @@ export default function Dashboard() {
                         </td>
                       </tr>
                     ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Phase 7B: KIOSK STATION MANAGEMENT */}
+            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+              <div className="event-header">
+                <h2>MANAJEMEN KIOSK STATION</h2>
+                <button type="button" onClick={() => { setStationFormData({ name: '' }); setPairingResult(null); setFormError(''); setIsStationModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Register Kiosk</button>
+              </div>
+              <div className="table-responsive">
+                <table className="monitoring-table">
+                  <thead><tr><th>Nama Station</th><th>Status</th><th>Aksi</th></tr></thead>
+                  <tbody>
+                    {stationsList.map(station => (
+                      <tr key={station.id}>
+                        <td>{station.name}</td>
+                        <td>
+                          {station.is_active === false ? <span style={{ color: 'var(--error-color)', fontWeight: 'bold' }}>○ INACTIVE</span> : <span style={{ color: 'var(--success-color, #10b981)', fontWeight: 'bold' }}>● ACTIVE</span>}
+                        </td>
+                        <td>
+                            <button type="button" onClick={() => handleToggleStation(station)} className="btn btn-primary btn-small" style={{ backgroundColor: station.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+                              {station.is_active ? 'Disable' : 'Activate'}
+                            </button>
+                        </td>
+                      </tr>
+                    ))}
+                    {stationsList.length === 0 && <tr><td colSpan="3" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada kiosk station.</td></tr>}
                   </tbody>
                 </table>
               </div>
@@ -772,6 +833,39 @@ export default function Dashboard() {
                 <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Menyimpan...' : 'Simpan'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Phase 7B: Station */}
+      {isStationModalOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <h2 style={{ marginBottom: '1.5rem' }}>Register Kiosk Station Baru</h2>
+            {formError && <div className="alert alert-error">{formError}</div>}
+            {pairingResult ? (
+              <div style={{ textAlign: 'center', padding: '2rem' }}>
+                <h3 style={{ marginBottom: '1rem', color: '#10b981' }}>Pairing Code:</h3>
+                <div style={{ fontSize: '3rem', fontWeight: 'bold', letterSpacing: '0.2em', marginBottom: '1rem', fontFamily: 'monospace' }}>
+                  {pairingResult.pairing_code}
+                </div>
+                <p style={{ color: 'var(--text-secondary)' }}>Berlaku selama 10 menit.<br/>Masukkan PIN ini pada PC yang membuka /kiosk.</p>
+                <div style={{ marginTop: '2rem' }}>
+                  <button type="button" onClick={() => setIsStationModalOpen(false)} className="btn btn-primary">Tutup</button>
+                </div>
+              </div>
+            ) : (
+              <form onSubmit={submitStation}>
+                <div className="form-group">
+                  <label>Nama PC/Station (misal: "Meja Depan")</label>
+                  <input type="text" className="form-control" value={stationFormData.name} onChange={e => setStationFormData({...stationFormData, name: e.target.value})} required />
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
+                  <button type="button" onClick={() => setIsStationModalOpen(false)} className="btn btn-primary" style={{ backgroundColor: 'var(--text-secondary)' }}>Batal</button>
+                  <button type="submit" className="btn btn-primary" disabled={formLoading}>{formLoading ? 'Memproses...' : 'Generate PIN'}</button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
