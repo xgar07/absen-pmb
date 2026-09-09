@@ -6,6 +6,32 @@ import KpiSummary from '../components/KpiSummary';
 import TaskList from '../components/TaskList';
 import PanitiaTable from '../components/PanitiaTable';
 
+function downloadCSV(filename, headers, rows) {
+  const escapeCSV = (val) => {
+    if (val === null || val === undefined) return '';
+    const str = String(val);
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+      return '"' + str.replace(/"/g, '""') + '"';
+    }
+    return str;
+  };
+
+  const csvContent = [
+    headers.join(','),
+    ...rows.map(row => row.map(escapeCSV).join(','))
+  ].join('\n');
+
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.setAttribute('download', filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -26,9 +52,8 @@ export default function Dashboard() {
   // Phase E States
   const [tasks, setTasks] = useState([]);
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
-  const [taskModalMode, setTaskModalMode] = useState('create'); // create, detail_dosen, detail_panitia
+  const [taskModalMode, setTaskModalMode] = useState('create'); // create, edit, detail_dosen, detail_panitia
   const [selectedTask, setSelectedTask] = useState(null);
-  const [taskLogs, setTaskLogs] = useState([]);
   const [taskFormData, setTaskFormData] = useState({ title: '', description: '', deadline: '' });
   const [myActivityTasks, setMyActivityTasks] = useState([]);
   const [attendanceHistory, setAttendanceHistory] = useState([]);
@@ -109,13 +134,13 @@ export default function Dashboard() {
         setMySchedules(validShifts);
 
         // Tasks (Phase E) - Panitia sees all
-        const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').neq('status', 'completed').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+        const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name), profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
 
         // Priority 4: Tasks I Interacted With
         const { data: interactedTasksData } = await supabase.from('task_progress_logs').select('task_id').eq('user_id', user.id);
         const interactedIds = [...new Set((interactedTasksData || []).map(log => log.task_id))];
         if (interactedIds.length > 0) {
-          const { data: myActivityTasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').in('id', interactedIds).order('updated_at', { ascending: false });
+          const { data: myActivityTasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name), profiles:last_updated_by(full_name)').in('id', interactedIds).order('updated_at', { ascending: false });
           setMyActivityTasks(myActivityTasksData || []);
         } else {
           setMyActivityTasks([]);
@@ -187,7 +212,7 @@ export default function Dashboard() {
         setEvents(eventsData || []);
 
         // Tasks (Phase E) - Dosen sees own
-        const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+        const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name), profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
 
         // Priority 3: History for Dosen
         const [allAttRes, allLogsRes] = await Promise.all([
@@ -302,6 +327,13 @@ export default function Dashboard() {
     setFormError(''); setIsTaskModalOpen(true);
   };
 
+  const openEditTaskModal = (task) => {
+    setTaskModalMode('edit');
+    setSelectedTask(task);
+    setTaskFormData({ title: task.title, description: task.description || '', deadline: task.deadline });
+    setFormError(''); setIsTaskModalOpen(true);
+  };
+
   const submitCreateTask = async (e) => {
     e.preventDefault(); setFormError(''); setFormLoading(true);
     try {
@@ -309,6 +341,18 @@ export default function Dashboard() {
       const { error } = await supabase.from('tasks').insert({
         title: taskFormData.title, description: taskFormData.description, deadline: taskFormData.deadline, created_by: profile.id
       });
+      if (error) throw error;
+      setIsTaskModalOpen(false); fetchDashboardData();
+    } catch (err) { setFormError(err.message); } finally { setFormLoading(false); }
+  };
+
+  const submitEditTask = async (e) => {
+    e.preventDefault(); setFormError(''); setFormLoading(true);
+    try {
+      if (!taskFormData.title || !taskFormData.deadline) throw new Error('Judul dan Deadline wajib');
+      const { error } = await supabase.from('tasks').update({
+        title: taskFormData.title, description: taskFormData.description, deadline: taskFormData.deadline
+      }).eq('id', selectedTask.id);
       if (error) throw error;
       setIsTaskModalOpen(false); fetchDashboardData();
     } catch (err) { setFormError(err.message); } finally { setFormLoading(false); }
@@ -345,6 +389,38 @@ export default function Dashboard() {
     if (!window.confirm('Hapus task?')) return;
     await supabase.from('tasks').delete().eq('id', id);
     fetchDashboardData();
+  };
+
+  const handleExportAttendance = () => {
+    const headers = ['Tanggal', 'Nama Panitia', 'Shift', 'Jam Mulai', 'Jam Selesai', 'IN', 'OUT', 'Status Telat', 'Alasan Telat', 'Alasan Pulang Cepat'];
+    const rows = attendanceHistory.map(row => [
+      row.schedule_date ? new Date(row.schedule_date).toLocaleDateString('id-ID') : '-',
+      row.full_name,
+      row.shift_name,
+      row.shift_start?.substring(0,5) || '-',
+      row.shift_end?.substring(0,5) || '-',
+      row.in_record ? formatTimeWIB(row.in_record.waktu_absen) : '-',
+      row.out_record ? formatTimeWIB(row.out_record.waktu_absen) : '-',
+      row.in_record?.late_status === 'terlambat' ? 'Terlambat' : 'Tepat Waktu',
+      row.in_record?.late_reason || '-',
+      row.out_record?.early_checkout_reason || '-'
+    ]);
+    const todayStr = getJakartaDayBounds().dateStr;
+    downloadCSV(`riwayat-absensi-pmb-${todayStr}.csv`, headers, rows);
+  };
+
+  const handleExportTaskHistory = () => {
+    const headers = ['Tanggal & Waktu', 'Nama Panitia', 'Judul Task', 'Status Sebelum', 'Status Sesudah', 'Catatan'];
+    const rows = taskHistoryLogs.map(log => [
+      new Date(log.created_at).toLocaleString('id-ID'),
+      log.profiles?.full_name || '-',
+      log.tasks?.title || '-',
+      log.previous_status?.replace('_', ' ') || '-',
+      log.new_status?.replace('_', ' ') || '-',
+      log.report || '-'
+    ]);
+    const todayStr = getJakartaDayBounds().dateStr;
+    downloadCSV(`riwayat-tugas-pmb-${todayStr}.csv`, headers, rows);
   };
 
   // ============================
@@ -524,6 +600,9 @@ export default function Dashboard() {
             <div className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
               🏠 Dashboard
             </div>
+            <div className={`sidebar-nav-item ${activeTab === 'jadwal' ? 'active' : ''}`} onClick={() => setActiveTab('jadwal')}>
+              📅 Jadwal Shift
+            </div>
             <div className={`sidebar-nav-item ${activeTab === 'event' ? 'active' : ''}`} onClick={() => setActiveTab('event')}>
               📅 Manajemen Event
             </div>
@@ -557,80 +636,64 @@ export default function Dashboard() {
                   <KpiSummary monitoringData={monitoringData} panitiaList={panitiaList} />
                   
                   {/* Phase E: TASK / ASSIGNMENT */}
-                  <div className="task-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+                  <div className="event-section" style={{ marginTop: '2rem' }}>
                     <div className="event-header">
-                      <h2>TASK / ASSIGNMENT</h2>
-                      <button type="button" onClick={openCreateTaskModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Buat Task</button>
+                      <h2>TUGAS (TODO & IN PROGRESS)</h2>
+                      <button type="button" onClick={openCreateTaskModal} className="btn btn-primary btn-small" style={{ width: 'auto' }}>+ Buat Task</button>
                     </div>
-                    <div className="event-grid">
-                      {tasks.map(task => (
-                        <div key={task.id} className="task-card">
-                          <div className="task-header">
-                            <h3 className="task-title">{task.title}</h3>
-                            <span className={`task-status status-${task.status}`}>{task.status.replace('_', ' ')}</span>
-                          </div>
-                          <p className="task-desc">{task.description}</p>
-                          <div className="task-meta">
-                            <span>📅 Deadline: {formatDate(task.deadline)}</span>
-                            <span>👤 Terakhir Diupdate: {task.profiles?.full_name || 'Belum ada'}</span>
-                          </div>
-                          <div className="progress-container"><div className="progress-bar" style={{ width: `${task.progress_percent}%` }}></div></div>
-                          <span style={{ fontSize: '0.8rem', textAlign: 'right' }}>{task.progress_percent}%</span>
-                          
-                          <div className="task-actions" style={{ marginTop: '1rem' }}>
-                            <button type="button" onClick={() => openTaskDetail(task, 'detail_dosen')} className="btn btn-primary btn-small">Lihat Detail</button>
-                            <button type="button" onClick={() => handleDeleteTask(task.id)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--error-color)' }}>Hapus</button>
-                          </div>
-                        </div>
-                      ))}
-                      {tasks.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada task.</p>}
-                    </div>
+                    {tasks.length > 0 ? (
+                      <TaskList 
+                        tasks={tasks} 
+                        formatDate={formatDate}
+                        openTaskDetail={openTaskDetail} 
+                        openEditTaskModal={openEditTaskModal}
+                        handleDeleteTask={handleDeleteTask}
+                      />
+                    ) : (
+                      <p style={{ color: 'var(--text-secondary)' }}>Belum ada task.</p>
+                    )}
                   </div>
 
-                  {/* Phase 8A: JADWAL SHIFT */}
+                  {/* Phase 8A: JADWAL SHIFT SUMMARY */}
                   <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
                     <div className="event-header">
-                      <h2>JADWAL SHIFT</h2>
-                      <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().dateStr }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
+                      <h2>JADWAL HARI INI & BESOK</h2>
+                      <button type="button" onClick={() => setActiveTab('jadwal')} className="btn btn-primary btn-small" style={{ width: 'auto' }}>
+                        Lihat Semua Jadwal
+                      </button>
                     </div>
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
-                      {(() => {
-                        const grouped = schedulesList.reduce((acc, curr) => {
-                          const date = curr.schedule_date;
-                          if (!acc[date]) acc[date] = [];
-                          acc[date].push(curr);
-                          return acc;
-                        }, {});
-                        
-                        return Object.keys(grouped).sort((a,b) => b.localeCompare(a)).map(date => (
-                          <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                            <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
-                              {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
-                            </h3>
-                            {grouped[date].map(sched => (
-                              <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                  <div style={{ fontWeight: 'bold', color: '#334155' }}>
-                                    {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
-                                  </div>
-                                  <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
-                                    {sched.shift_members?.length || 0} Panitia
-                                  </span>
-                                </div>
-                                <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                                  {sched.shifts?.start_time?.substring(0,5)} — {sched.shifts?.end_time?.substring(0,5)}
-                                </div>
-                                <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
-                                  Kelola Member
-                                </button>
+                    {(() => {
+                      const todayStr = getJakartaDayBounds().dateStr;
+                      const tomorrowDate = new Date();
+                      tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+                      const tomorrowStr = getJakartaDayBounds(tomorrowDate).dateStr;
+                      
+                      const relevantSchedules = schedulesList.filter(s => s.schedule_date === todayStr || s.schedule_date === tomorrowStr);
+                      
+                      if (relevantSchedules.length === 0) {
+                        return <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal untuk hari ini atau besok.</p>;
+                      }
+                      
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                          {relevantSchedules.map(sched => (
+                            <div key={sched.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                              <div>
+                                <span style={{ fontWeight: 'bold' }}>
+                                  {sched.schedule_date === todayStr ? 'Hari ini' : 'Besok'} — {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {sched.shifts?.name}
+                                </span>
+                                <span style={{ color: '#64748b', marginLeft: '0.5rem', fontSize: '0.9rem' }}>
+                                  {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · {sched.shift_members?.length || 0} panitia
+                                </span>
                               </div>
-                            ))}
-                          </div>
-                        ));
-                      })()}
-                      {schedulesList.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal shift.</p>}
-                    </div>
+                              <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small">
+                                Kelola
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Phase C: MONITORING */}
@@ -764,7 +827,10 @@ export default function Dashboard() {
                   {/* Phase E: RIWAYAT TUGAS */}
                   <div className="event-section section-spacing">
                     <div className="event-header">
-                      
+                      <h2>RIWAYAT TUGAS (AUDIT LOG)</h2>
+                      <button type="button" onClick={handleExportTaskHistory} className="btn btn-primary btn-small" style={{ width: 'auto' }}>
+                        ⬇ Export CSV
+                      </button>
                     </div>
                     <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
                       {taskHistoryLogs.map(log => {
@@ -795,6 +861,9 @@ export default function Dashboard() {
                   <div className="event-section section-spacing">
                     <div className="event-header">
                       <h2>RIWAYAT ABSENSI KESELURUHAN</h2>
+                      <button type="button" onClick={handleExportAttendance} className="btn btn-primary btn-small" style={{ width: 'auto' }}>
+                        ⬇ Export CSV
+                      </button>
                     </div>
                     <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
                       <table className="monitoring-table">
@@ -835,6 +904,56 @@ export default function Dashboard() {
                           {attendanceHistory.length === 0 && <tr><td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
                         </tbody>
                       </table>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'jadwal' && (
+                <>
+                  <h2 className="page-title">JADWAL SHIFT</h2>
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+                    <div className="event-header">
+                      <h2>SEMUA JADWAL SHIFT</h2>
+                      <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().dateStr }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+                      {(() => {
+                        const grouped = schedulesList.reduce((acc, curr) => {
+                          const date = curr.schedule_date;
+                          if (!acc[date]) acc[date] = [];
+                          acc[date].push(curr);
+                          return acc;
+                        }, {});
+                        
+                        return Object.keys(grouped).sort((a,b) => b.localeCompare(a)).map(date => (
+                          <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                            <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
+                              {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                            </h3>
+                            {grouped[date].map(sched => (
+                              <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                  <div style={{ fontWeight: 'bold', color: '#334155' }}>
+                                    {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
+                                  </div>
+                                  <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
+                                    {sched.shift_members?.length || 0} Panitia
+                                  </span>
+                                </div>
+                                <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                                  {sched.shifts?.start_time?.substring(0,5)} — {sched.shifts?.end_time?.substring(0,5)}
+                                </div>
+                                <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
+                                  Kelola Member
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ));
+                      })()}
+                      {schedulesList.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal shift.</p>}
                     </div>
                   </div>
                 </>
@@ -960,9 +1079,12 @@ export default function Dashboard() {
 
               {activeTab === 'tugas' && (
                 <>
-                  <h2 className="page-title">TUGAS &amp; KEGIATAN</h2>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h2 className="page-title">TUGAS &amp; KEGIATAN</h2>
+                    <button type="button" onClick={openCreateTaskModal} className="btn btn-primary btn-small" style={{ width: 'auto', marginBottom: '1rem' }}>+ Buat Task</button>
+                  </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                    <TaskList tasks={tasks} formatDate={formatDate} openTaskDetail={openTaskDetail} />
+                    <TaskList tasks={tasks} formatDate={formatDate} openTaskDetail={openTaskDetail} openEditTaskModal={openEditTaskModal} handleDeleteTask={handleDeleteTask} />
                     
                     {/* Phase D: EVENT / KEGIATAN */}
                     <div className="event-section" style={{ minWidth: '300px', margin: '0' }}>
@@ -1037,11 +1159,11 @@ export default function Dashboard() {
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: '600px' }}>
             
-            {taskModalMode === 'create' ? (
+            {(taskModalMode === 'create' || taskModalMode === 'edit') ? (
               <>
-                <h2 style={{ marginBottom: '1.5rem' }}>Buat Task Baru</h2>
+                <h2 style={{ marginBottom: '1.5rem' }}>{taskModalMode === 'create' ? 'Buat Task Baru' : 'Edit Task'}</h2>
                 {formError && <div className="alert alert-error">{formError}</div>}
-                <form onSubmit={submitCreateTask}>
+                <form onSubmit={taskModalMode === 'create' ? submitCreateTask : submitEditTask}>
                   <div className="form-group">
                     <label>Judul Task</label>
                     <input type="text" className="form-control" value={taskFormData.title} onChange={e => setTaskFormData({...taskFormData, title: e.target.value})} required />

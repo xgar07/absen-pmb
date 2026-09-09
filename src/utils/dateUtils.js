@@ -1,4 +1,4 @@
-export const getJakartaDayBounds = () => {
+export const getJakartaDayBounds = (inputDate = new Date()) => {
   // Gunakan formatToParts untuk mengambil tahun, bulan, dan hari di zona waktu Jakarta
   const formatter = new Intl.DateTimeFormat('en-US', {
     timeZone: 'Asia/Jakarta',
@@ -7,7 +7,7 @@ export const getJakartaDayBounds = () => {
     day: '2-digit'
   });
   
-  const parts = formatter.formatToParts(new Date());
+  const parts = formatter.formatToParts(inputDate);
   const year = parts.find(p => p.type === 'year').value;
   const month = parts.find(p => p.type === 'month').value;
   const day = parts.find(p => p.type === 'day').value;
