@@ -13,7 +13,9 @@ export default function Scanner() {
 
   // Preview & Confirm State
   const [showConfirm, setShowConfirm] = useState(false);
-  const [previewData, setPreviewData] = useState(null); // { action, shift_name, is_early_checkout }
+  const [previewData, setPreviewData] = useState(null); // { action, shift_id, shift_name, is_early_checkout }
+  const [availableActions, setAvailableActions] = useState([]);
+  const [showActionSelection, setShowActionSelection] = useState(false);
   
   // Reason State (used for both late IN and early OUT)
   const [reason, setReason] = useState('');
@@ -70,7 +72,9 @@ export default function Scanner() {
     setSuccess(null);
     setIsLate(false);
     setShowConfirm(false);
+    setShowActionSelection(false);
     setPreviewData(null);
+    setAvailableActions([]);
     setReason('');
     setScannedToken(null);
     setScanStatus('Meminta akses kamera...');
@@ -124,11 +128,19 @@ export default function Scanner() {
       }
 
       if (data && data.success) {
-        // Success preview, show confirmation
-        setPreviewData(data);
         setScannedToken(token);
-        setShowConfirm(true);
-        setScanStatus('Konfirmasi Absen');
+        if (data.actions && data.actions.length > 1) {
+          setAvailableActions(data.actions);
+          setShowActionSelection(true);
+          setScanStatus('Pilih Aksi Absensi');
+        } else if (data.actions && data.actions.length === 1) {
+          setPreviewData(data.actions[0]);
+          setShowConfirm(true);
+          setScanStatus('Konfirmasi Absen');
+        } else {
+          setError('TIDAK ADA AKSI ABSENSI YANG VALID');
+          setScanStatus('Gagal');
+        }
       } else {
         setError(mapError(data?.error, data?.message));
         setScanStatus('Gagal');
@@ -144,6 +156,8 @@ export default function Scanner() {
       setIsSubmittingReason(true);
       const { data, error: rpcError } = await supabase.rpc('submit_attendance', { 
         qr_token: token,
+        p_shift_id: previewData.shift_id,
+        p_action: previewData.action,
         p_reason: reasonText
       });
       
@@ -194,6 +208,13 @@ export default function Scanner() {
     e.preventDefault();
     if (previewData?.is_early_checkout && !reason.trim()) return;
     await submitToken(scannedToken, previewData?.is_early_checkout ? reason : null);
+  };
+
+  const handleSelectAction = (actionItem) => {
+    setShowActionSelection(false);
+    setPreviewData(actionItem);
+    setShowConfirm(true);
+    setScanStatus('Konfirmasi Absen');
   };
 
   const handleRetry = () => {
@@ -251,6 +272,42 @@ export default function Scanner() {
                 {isSubmittingReason ? 'Menyimpan...' : 'Submit Keterangan'}
               </button>
             </form>
+          </div>
+        )}
+
+        {showActionSelection && !isLate && (
+          <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'white', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', borderTop: '4px solid #6366f1' }}>
+            <h3 style={{ color: '#312e81', marginBottom: '1rem', textAlign: 'center' }}>Pilih Aksi Absensi</h3>
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>
+              Anda memiliki beberapa absensi yang dapat dilakukan saat ini. Silakan pilih salah satu:
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              {availableActions.map((actionItem, idx) => (
+                <div key={idx} style={{ border: '1px solid #e0e7ff', borderRadius: '8px', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 'bold', color: '#3730a3' }}>{actionItem.shift_name}</div>
+                    <div style={{ fontSize: '0.8rem', color: '#6b7280' }}>
+                      {actionItem.start_time.substring(0,5)} — {actionItem.end_time.substring(0,5)}
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => handleSelectAction(actionItem)} 
+                    className="btn btn-primary" 
+                    style={{ padding: '0.5rem 1rem', fontSize: '0.85rem' }}
+                  >
+                    {actionItem.action === 'IN' ? 'Masuk' : 'Pulang'}
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button 
+              type="button" 
+              onClick={handleRetry} 
+              className="btn" 
+              style={{ width: '100%', marginTop: '1.5rem', backgroundColor: '#e2e8f0', color: '#475569' }}
+            >
+              Batal
+            </button>
           </div>
         )}
 
