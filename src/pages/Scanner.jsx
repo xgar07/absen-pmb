@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
@@ -11,11 +11,17 @@ export default function Scanner() {
   const [success, setSuccess] = useState(null);
   const [scannerInstance, setScannerInstance] = useState(null);
 
-  // Late Reason State
-  const [isLate, setIsLate] = useState(false);
-  const [lateReason, setLateReason] = useState('');
+  // Preview & Confirm State
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [previewData, setPreviewData] = useState(null); // { action, shift_name, is_early_checkout }
+  
+  // Reason State (used for both late IN and early OUT)
+  const [reason, setReason] = useState('');
+  const [isLate, setIsLate] = useState(false); // true if IN requires late reason
   const [scannedToken, setScannedToken] = useState(null);
   const [isSubmittingReason, setIsSubmittingReason] = useState(false);
+  
+  const isRequestingRef = useRef(false);
 
   useEffect(() => {
     // Check if user is authenticated and is panitia
@@ -36,51 +42,95 @@ export default function Scanner() {
   }, [navigate]);
 
   useEffect(() => {
-    // Only initialize scanner once
     if (!scannerInstance) {
       const html5QrCode = new Html5Qrcode("reader");
       setScannerInstance(html5QrCode);
     }
   }, [scannerInstance]);
 
-  const submitToken = async (token, reason = null) => {
+  const mapError = (errorCode, dataMsg) => {
+    let uiError = dataMsg || 'QR TIDAK VALID';
+    if (errorCode === 'FUTURE_TOKEN') uiError = 'QR BELUM AKTIF';
+    if (errorCode === 'EXPIRED_TOKEN') uiError = 'QR KADALUARSA';
+    if (errorCode === 'DUPLICATE') uiError = dataMsg || 'ANDA SUDAH ABSEN';
+    if (errorCode === 'INVALID_SIGNATURE' || errorCode === 'INVALID_PAYLOAD' || errorCode === 'INVALID_FORMAT') uiError = 'QR TIDAK VALID';
+    if (errorCode === 'UNAUTHORIZED' || errorCode === 'FORBIDDEN') uiError = 'AKSES DITOLAK';
+    if (errorCode === 'NO_SHIFT') uiError = 'TIDAK ADA JADWAL SHIFT UNTUK ANDA HARI INI';
+    if (errorCode === 'SHIFT_COMPLETED') uiError = 'SHIFT ANDA SUDAH SELESAI (Sudah Absen Masuk & Pulang)';
+    if (errorCode === 'EARLY_ATTENDANCE') uiError = 'BELUM WAKTUNYA SHIFT DIMULAI';
+    if (errorCode === 'SERVER_ERROR') uiError = dataMsg || 'TERJADI KESALAHAN SERVER';
+    return uiError;
+  };
+
+  const startScanning = async () => {
+    if (!scannerInstance) return;
+    
+    isRequestingRef.current = false;
+    setError(null);
+    setSuccess(null);
+    setIsLate(false);
+    setShowConfirm(false);
+    setPreviewData(null);
+    setReason('');
+    setScannedToken(null);
+    setScanStatus('Meminta akses kamera...');
+    
     try {
-      const { data, error: rpcError } = await supabase.rpc('submit_attendance', { 
-        qr_token: token,
-        p_reason: reason
-      });
+      await scannerInstance.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        async (decodedText) => {
+          if (isRequestingRef.current) return;
+          isRequestingRef.current = true;
+          
+          try {
+            await scannerInstance.stop();
+            setIsScanning(false);
+          } catch (err) { console.error(err); }
+          
+          setScanStatus('Memverifikasi...');
+          setError(null);
+          await handleScanResult(decodedText);
+        },
+        () => {}
+      );
+      setIsScanning(true);
+      setScanStatus('Scanning...');
+    } catch (err) {
+      console.error(err);
+      setError('AKSES KAMERA DITOLAK');
+      setScanStatus('Kamera gagal dimuat');
+    }
+  };
+
+  useEffect(() => {
+    if (scannerInstance) {
+      startScanning();
+    }
+    return () => {
+      if (scannerInstance && scannerInstance.isScanning) {
+        scannerInstance.stop().catch(console.error);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scannerInstance]);
+
+  const handleScanResult = async (token) => {
+    try {
+      const { data, error: rpcError } = await supabase.rpc('preview_attendance_action', { qr_token: token });
       
       if (rpcError) {
-        throw new Error(`GAGAL TERHUBUNG KE SERVER: ${rpcError.message || rpcError.details || JSON.stringify(rpcError)}`);
+        throw new Error(`GAGAL TERHUBUNG KE SERVER: ${rpcError.message || JSON.stringify(rpcError)}`);
       }
 
       if (data && data.success) {
-        setSuccess(data.message);
-        setScanStatus('Selesai');
-        setIsLate(false);
-        setError(null);
+        // Success preview, show confirmation
+        setPreviewData(data);
+        setScannedToken(token);
+        setShowConfirm(true);
+        setScanStatus('Konfirmasi Absen');
       } else {
-        const errorCode = data?.error;
-        if (errorCode === 'LATE_REASON_REQUIRED') {
-           setIsLate(true);
-           setScannedToken(token);
-           setError(data.message);
-           setScanStatus('Menunggu Keterangan');
-           return;
-        }
-
-        let uiError = data?.message || 'QR TIDAK VALID';
-        if (errorCode === 'FUTURE_TOKEN') uiError = 'QR BELUM AKTIF';
-        if (errorCode === 'EXPIRED_TOKEN') uiError = 'QR KADALUARSA';
-        if (errorCode === 'DUPLICATE') uiError = data?.message || 'ANDA SUDAH ABSEN';
-        if (errorCode === 'INVALID_SIGNATURE' || errorCode === 'INVALID_PAYLOAD' || errorCode === 'INVALID_FORMAT') uiError = 'QR TIDAK VALID';
-        if (errorCode === 'UNAUTHORIZED' || errorCode === 'FORBIDDEN') uiError = 'AKSES DITOLAK';
-        if (errorCode === 'NO_SHIFT') uiError = 'TIDAK ADA JADWAL SHIFT UNTUK ANDA HARI INI';
-        if (errorCode === 'SHIFT_COMPLETED') uiError = 'SHIFT ANDA SUDAH SELESAI (Sudah Absen Masuk & Pulang)';
-        if (errorCode === 'EARLY_ATTENDANCE') uiError = 'BELUM WAKTUNYA SHIFT DIMULAI';
-        if (errorCode === 'SERVER_ERROR') uiError = data?.message || 'TERJADI KESALAHAN SERVER';
-        
-        setError(uiError);
+        setError(mapError(data?.error, data?.message));
         setScanStatus('Gagal');
       }
     } catch (err) {
@@ -89,91 +139,65 @@ export default function Scanner() {
     }
   };
 
-  useEffect(() => {
-    if (!scannerInstance) return;
-
-    let isRequesting = false; // Prevent multiple requests
-
-    const onScanSuccess = async (decodedText) => {
-      if (isRequesting) return; // Prevent double submit
-      isRequesting = true;
-      
-      // Stop scanning to prevent multiple reads
-      try {
-        await scannerInstance.stop();
-        setIsScanning(false);
-      } catch (err) {
-        console.error("Failed to stop scanner", err);
-      }
-
-      setScanStatus('Memverifikasi...');
-      setError(null);
-      await submitToken(decodedText);
-    };
-
-    const startScanner = async () => {
-      try {
-        setScanStatus('Meminta akses kamera...');
-        await scannerInstance.start(
-          { facingMode: "environment" },
-          { fps: 10, qrbox: { width: 250, height: 250 } },
-          onScanSuccess,
-          () => {
-            // Ignore scan failures (happens on every frame without QR)
-          }
-        );
-        setIsScanning(true);
-        setScanStatus('Scanning...');
-      } catch (err) {
-        console.error(err);
-        setError('AKSES KAMERA DITOLAK');
-        setScanStatus('Kamera gagal dimuat');
-      }
-    };
-
-    startScanner();
-
-    // Cleanup on unmount
-    return () => {
-      if (scannerInstance && scannerInstance.isScanning) {
-        scannerInstance.stop().catch(console.error);
-      }
-    };
-  }, [scannerInstance]);
-
-  const handleRetry = () => {
-    setError(null);
-    setSuccess(null);
-    setIsLate(false);
-    setLateReason('');
-    setScannedToken(null);
-    setScanStatus('Mengulang...');
-    navigate('/scan', { replace: true });
-    
-    if (scannerInstance && !scannerInstance.isScanning) {
-      scannerInstance.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        async (decodedText) => {
-          if (scannerInstance.isScanning) {
-            await scannerInstance.stop();
-            setIsScanning(false);
-          }
-          navigate('/scan', { replace: true });
-        },
-        () => {}
-      ).catch(err => {
-        setError('AKSES KAMERA DITOLAK');
+  const submitToken = async (token, reasonText = null) => {
+    try {
+      setIsSubmittingReason(true);
+      const { data, error: rpcError } = await supabase.rpc('submit_attendance', { 
+        qr_token: token,
+        p_reason: reasonText
       });
+      
+      if (rpcError) {
+        throw new Error(`GAGAL TERHUBUNG KE SERVER: ${rpcError.message || JSON.stringify(rpcError)}`);
+      }
+
+      if (data && data.success) {
+        setSuccess(data.message);
+        setScanStatus('Selesai');
+        setIsLate(false);
+        setShowConfirm(false);
+        setError(null);
+      } else {
+        const errorCode = data?.error;
+        if (errorCode === 'LATE_REASON_REQUIRED') {
+           setIsLate(true);
+           setShowConfirm(false);
+           setScannedToken(token);
+           setError(data.message);
+           setScanStatus('Menunggu Keterangan');
+        } else if (errorCode === 'EXPIRED_TOKEN') {
+           setError('QR KADALUARSA saat konfirmasi, silakan scan ulang');
+           setScanStatus('Gagal');
+           setShowConfirm(false);
+        } else {
+           setError(mapError(errorCode, data?.message));
+           setScanStatus('Gagal');
+           setShowConfirm(false);
+        }
+      }
+    } catch (err) {
+      setError(err.message || 'GAGAL TERHUBUNG KE SERVER');
+      setScanStatus('Gagal');
+      setShowConfirm(false);
+    } finally {
+      setIsSubmittingReason(false);
     }
   };
 
   const handleSubmitReason = async (e) => {
     e.preventDefault();
-    if (!lateReason.trim()) return;
-    setIsSubmittingReason(true);
-    await submitToken(scannedToken, lateReason);
-    setIsSubmittingReason(false);
+    if (!reason.trim()) return;
+    await submitToken(scannedToken, reason);
+  };
+
+  const handleConfirmSubmit = async (e) => {
+    e.preventDefault();
+    if (previewData?.is_early_checkout && !reason.trim()) return;
+    await submitToken(scannedToken, previewData?.is_early_checkout ? reason : null);
+  };
+
+  const handleRetry = () => {
+    startScanning();
   };
 
   return (
@@ -200,7 +224,7 @@ export default function Scanner() {
           </div>
         )}
 
-        {isLate ? (
+        {isLate && (
           <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'white', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', borderTop: '4px solid #f59e0b' }}>
             <h3 style={{ color: '#d97706', marginBottom: '1rem', textAlign: 'center' }}>Anda Terlambat</h3>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', textAlign: 'center', fontSize: '0.9rem' }}>
@@ -212,8 +236,8 @@ export default function Scanner() {
                 <textarea 
                   className="form-control" 
                   rows="3" 
-                  value={lateReason}
-                  onChange={(e) => setLateReason(e.target.value)}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
                   placeholder="Contoh: Macet di perjalanan, dll."
                   required
                 ></textarea>
@@ -222,13 +246,61 @@ export default function Scanner() {
                 type="submit" 
                 className="btn btn-primary" 
                 style={{ width: '100%', marginTop: '1rem', backgroundColor: '#f59e0b' }}
-                disabled={isSubmittingReason || !lateReason.trim()}
+                disabled={isSubmittingReason || !reason.trim()}
               >
                 {isSubmittingReason ? 'Menyimpan...' : 'Submit Keterangan'}
               </button>
             </form>
           </div>
-        ) : (
+        )}
+
+        {showConfirm && previewData && !isLate && (
+          <div style={{ width: '100%', maxWidth: '400px', backgroundColor: 'white', padding: '2rem', borderRadius: '12px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)', borderTop: '4px solid #38bdf8' }}>
+            <h3 style={{ color: '#0f172a', marginBottom: '1rem', textAlign: 'center' }}>Konfirmasi Absen</h3>
+            
+            <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem', textAlign: 'center', fontSize: '1rem' }}>
+              Anda akan Absen <strong>{previewData.action === 'IN' ? 'MASUK' : 'PULANG'}</strong> untuk Shift <strong>{previewData.shift_name}</strong>. Lanjutkan?
+            </p>
+
+            <form onSubmit={handleConfirmSubmit}>
+              {previewData.is_early_checkout && (
+                <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ color: '#d97706', fontWeight: 'bold' }}>Alasan Pulang Cepat (Wajib)</label>
+                  <textarea 
+                    className="form-control" 
+                    rows="3" 
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="Contoh: Izin urusan keluarga, dll."
+                    required
+                  ></textarea>
+                </div>
+              )}
+              
+              <div style={{ display: 'flex', gap: '1rem' }}>
+                <button 
+                  type="button" 
+                  onClick={handleRetry} 
+                  className="btn" 
+                  style={{ flex: 1, backgroundColor: '#e2e8f0', color: '#475569' }}
+                  disabled={isSubmittingReason}
+                >
+                  Batal
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary" 
+                  style={{ flex: 1 }}
+                  disabled={isSubmittingReason || (previewData.is_early_checkout && !reason.trim())}
+                >
+                  {isSubmittingReason ? 'Menyimpan...' : 'Ya, Lanjutkan'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {!isLate && !showConfirm && (
           <div style={{ position: 'relative', width: '100%', maxWidth: '400px', backgroundColor: '#000', borderRadius: '12px', overflow: 'hidden' }}>
             <div id="reader" style={{ width: '100%', minHeight: '300px' }}></div>
             {!isScanning && scanStatus !== 'Selesai' && !error && (
@@ -239,7 +311,7 @@ export default function Scanner() {
           </div>
         )}
 
-        {(error || success) && !isLate && (
+        {(error || success) && !isLate && !showConfirm && (
           <div style={{ marginTop: '2rem', display: 'flex', gap: '1rem' }}>
             <button type="button" onClick={() => navigate('/')} className="btn btn-primary" style={{ backgroundColor: '#64748b' }}>Kembali ke Dashboard</button>
             <button type="button" onClick={handleRetry} className="btn btn-primary">Scan Ulang</button>

@@ -91,7 +91,7 @@ begin
   v_current_time := (now() at time zone 'Asia/Jakarta')::time;
   
   for sched in (
-    select ss.id, s.start_time 
+    select ss.id, s.start_time, s.end_time
     from public.shift_members sm
     join public.shift_schedules ss on sm.schedule_id = ss.id
     join public.shifts s on ss.shift_id = s.id
@@ -139,9 +139,25 @@ begin
       -- State: Sudah IN, belum OUT. Maka aksi saat ini adalah OUT.
       v_all_completed := false;
       
+      -- VALIDASI PULANG CEPAT
+      if v_current_time < sched.end_time then
+        if p_reason is null or trim(p_reason) = '' then
+          return json_build_object('success', false, 'error', 'EARLY_CHECKOUT_REASON_REQUIRED', 'message', 'Anda pulang sebelum jam shift berakhir, mohon isi alasan');
+        end if;
+        -- simpan ke early_checkout_reason, bukan late_reason
+        begin
+          insert into public.attendance (panitia_id, shift_schedule_id, attendance_type, status, late_status, early_checkout_reason)
+          values (v_user_id, sched.id, 'OUT', 'Hadir', 'tepat_waktu', p_reason);
+          return json_build_object('success', true, 'message', 'Berhasil Absen PULANG (Lebih Awal)');
+        exception when unique_violation then
+          return json_build_object('success', false, 'error', 'DUPLICATE', 'message', 'ANDA SUDAH ABSEN PULANG UNTUK SHIFT INI');
+        end;
+      end if;
+
+      -- OUT normal (setelah jam shift berakhir), logic lama tetap dipakai
       begin
-        insert into public.attendance (panitia_id, shift_schedule_id, attendance_type, status, late_status, late_reason)
-        values (v_user_id, sched.id, 'OUT', 'Hadir', 'tepat_waktu', null);
+        insert into public.attendance (panitia_id, shift_schedule_id, attendance_type, status, late_status)
+        values (v_user_id, sched.id, 'OUT', 'Hadir', 'tepat_waktu');
         return json_build_object('success', true, 'message', 'Berhasil Absen PULANG');
       exception when unique_violation then
         return json_build_object('success', false, 'error', 'DUPLICATE', 'message', 'ANDA SUDAH ABSEN PULANG UNTUK SHIFT INI');
@@ -207,3 +223,104 @@ end;
 $$;
 revoke execute on function public.assign_panitia_to_shift_today(uuid, uuid) from public;
 grant execute on function public.assign_panitia_to_shift_today(uuid, uuid) to authenticated;
+
+-- BUG FIX & FEATURE: EARLY CHECKOUT REASON & PREVIEW
+alter table public.attendance add column if not exists early_checkout_reason text;
+
+create or replace function public.preview_attendance_action(qr_token text)
+returns json
+language plpgsql
+security definer
+set search_path = public, extensions
+as $$
+declare
+  v_secret constant text := 'SANGAT_RAHASIA_UBAH_DI_PROD_12345';
+  v_user_id uuid;
+  v_role text;
+  v_parts text[];
+  v_payload_b64 text;
+  v_signature text;
+  v_payload_json json;
+  v_token_window bigint;
+  v_expected_signature text;
+  v_current_window bigint;
+  v_current_time time;
+  v_current_date date;
+  sched record;
+  v_has_schedules boolean := false;
+  v_in_exists boolean;
+  v_out_exists boolean;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    return json_build_object('success', false, 'error', 'UNAUTHORIZED', 'message', 'Anda harus login');
+  end if;
+
+  select role into v_role from public.profiles where id = v_user_id;
+  if v_role is null or v_role != 'panitia' then
+    return json_build_object('success', false, 'error', 'FORBIDDEN', 'message', 'Hanya panitia yang dapat melakukan absensi');
+  end if;
+
+  v_parts := string_to_array(qr_token, '.');
+  if array_length(v_parts, 1) != 2 then
+    return json_build_object('success', false, 'error', 'INVALID_FORMAT', 'message', 'QR TIDAK VALID');
+  end if;
+
+  v_payload_b64 := v_parts[1];
+  v_signature := v_parts[2];
+
+  begin
+    v_payload_json := convert_from(decode(v_payload_b64, 'base64'), 'utf8')::json;
+    v_token_window := (v_payload_json->>'window')::bigint;
+  exception when others then
+    return json_build_object('success', false, 'error', 'INVALID_PAYLOAD', 'message', 'QR TIDAK VALID');
+  end;
+
+  v_expected_signature := encode(hmac(decode(v_payload_b64, 'base64'), convert_to(v_secret, 'utf8'), 'sha256'), 'base64');
+  if v_signature != v_expected_signature then
+    return json_build_object('success', false, 'error', 'INVALID_SIGNATURE', 'message', 'QR TIDAK VALID');
+  end if;
+
+  v_current_window := floor(extract(epoch from now()) / 60)::bigint;
+  if v_current_window < v_token_window then
+    return json_build_object('success', false, 'error', 'FUTURE_TOKEN', 'message', 'QR BELUM AKTIF');
+  elsif v_current_window > v_token_window + 1 then
+    return json_build_object('success', false, 'error', 'EXPIRED_TOKEN', 'message', 'QR KADALUARSA');
+  end if;
+
+  v_current_date := (now() at time zone 'Asia/Jakarta')::date;
+  v_current_time := (now() at time zone 'Asia/Jakarta')::time;
+
+  for sched in (
+    select ss.id, s.name as shift_name, s.start_time, s.end_time
+    from public.shift_members sm
+    join public.shift_schedules ss on sm.schedule_id = ss.id
+    join public.shifts s on ss.shift_id = s.id
+    where sm.user_id = v_user_id and ss.schedule_date = v_current_date and s.is_active = true
+    order by s.start_time asc
+  ) loop
+    v_has_schedules := true;
+    select exists(select 1 from public.attendance where panitia_id = v_user_id and shift_schedule_id = sched.id and attendance_type = 'IN') into v_in_exists;
+    select exists(select 1 from public.attendance where panitia_id = v_user_id and shift_schedule_id = sched.id and attendance_type = 'OUT') into v_out_exists;
+
+    if not v_in_exists then
+      if v_current_time < sched.start_time then
+        return json_build_object('success', false, 'error', 'EARLY_ATTENDANCE', 'message', 'Belum waktunya shift dimulai');
+      end if;
+      return json_build_object('success', true, 'action', 'IN', 'shift_name', sched.shift_name, 'is_early_checkout', false);
+    elsif v_in_exists and not v_out_exists then
+      declare v_is_early boolean := v_current_time < sched.end_time;
+      begin
+        return json_build_object('success', true, 'action', 'OUT', 'shift_name', sched.shift_name, 'is_early_checkout', v_is_early);
+      end;
+    end if;
+  end loop;
+
+  if not v_has_schedules then
+    return json_build_object('success', false, 'error', 'NO_SHIFT', 'message', 'TIDAK ADA JADWAL SHIFT');
+  end if;
+
+  return json_build_object('success', false, 'error', 'SHIFT_COMPLETED', 'message', 'SHIFT SELESAI');
+end;
+$$;
+grant execute on function public.preview_attendance_action(text) to authenticated;
