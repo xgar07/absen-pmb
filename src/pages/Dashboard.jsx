@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabaseClient';
 import { getJakartaDayBounds, formatTimeWIB } from '../utils/dateUtils';
+import KpiSummary from '../components/KpiSummary';
+import TaskList from '../components/TaskList';
+import PanitiaTable from '../components/PanitiaTable';
 
 export default function Dashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
   
   // Phase C States
   const [attendanceData, setAttendanceData] = useState(null);
@@ -119,6 +123,18 @@ export default function Dashboard() {
         setTasks(tasksData || []);
       } 
       else if (profileData.role === 'dosen') {
+        // Phase 8A: Dosen Shifts
+        const { data: shiftsData } = await supabase.from('shifts').select('*').order('start_time');
+        setShiftsList(shiftsData || []);
+        const { data: schedulesData } = await supabase.from('shift_schedules').select('*, shifts(*), shift_members(*, profiles(full_name))').order('schedule_date', { ascending: false });
+        setSchedulesList(schedulesData || []);
+
+        const scheduledPanitiaIds = new Set(
+          (schedulesData || [])
+            .filter(s => s.schedule_date === bounds.dateStr)
+            .flatMap(s => (s.shift_members || []).map(m => m.user_id))
+        );
+
         // Monitoring
         const [profilesRes, attendancesRes, stationsRes] = await Promise.all([
           supabase.from('profiles').select('id, full_name, username, nim, is_active').eq('role', 'panitia'),
@@ -134,10 +150,12 @@ export default function Dashboard() {
           const sortedProfiles = [...profilesRes.data].sort((a, b) => a.full_name.localeCompare(b.full_name));
           setPanitiaList(sortedProfiles);
           if (attendancesRes.data) {
-            const merged = sortedProfiles.map(p => ({
-              ...p,
-              attendance: attendancesRes.data.find(a => a.panitia_id === p.id) || null
-            }));
+            const merged = sortedProfiles
+              .filter(p => scheduledPanitiaIds.has(p.id))
+              .map(p => ({
+                ...p,
+                attendance: attendancesRes.data.find(a => a.panitia_id === p.id) || null
+              }));
             setMonitoringData(merged);
           }
         }
@@ -145,12 +163,6 @@ export default function Dashboard() {
         // Events
         const { data: eventsData } = await supabase.from('events').select('*, event_members (panitia_id)').order('date', { ascending: false }).order('start_time', { ascending: false });
         setEvents(eventsData || []);
-
-        // Phase 8A: Dosen Shifts
-        const { data: shiftsData } = await supabase.from('shifts').select('*').order('start_time');
-        setShiftsList(shiftsData || []);
-        const { data: schedulesData } = await supabase.from('shift_schedules').select('*, shifts(*), shift_members(*, profiles(full_name))').order('schedule_date', { ascending: false });
-        setSchedulesList(schedulesData || []);
 
         // Tasks (Phase E) - Dosen sees own
         const { data: tasksData } = await supabase.from('tasks').select('*, profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
@@ -443,435 +455,453 @@ export default function Dashboard() {
   const formatDate = (dateStr) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(new Date(dateStr));
   const formatTime = (timeStr) => timeStr.substring(0, 5) + ' WIB';
 
-  if (loading) return <div className="dashboard-layout"><div className="dashboard-content"><p>Memuat...</p></div></div>;
+  if (loading) return (
+    <div className="loader-container">
+      <div className="spinner"></div>
+    </div>
+  );
   if (!profile) return <div className="dashboard-layout"><div className="dashboard-content"><button onClick={handleLogout} className="btn btn-primary">Logout</button></div></div>;
 
   return (
     <div className="dashboard-layout">
-      <nav className="navbar">
-        <div className="container">
-          <div className="navbar-brand">Sistem PMB</div>
-          <div className="user-menu">
-            <span className="user-name">{profile.full_name}</span>
-            <span className="user-role">{profile.role}</span>
-            <button type="button" onClick={handleLogout} className="btn-logout">Logout</button>
-          </div>
-        </div>
-      </nav>
+      {/* SIDEBAR NAVIGATION */}
+      <div className="dashboard-sidebar">
+        <div className="navbar-brand">Sistem PMB</div>
 
-      <main className="dashboard-content container">
-        {profile.role === 'dosen' ? (
-          <div className="dashboard-placeholder dosen-view" style={{ padding: '2rem', display: 'block', textAlign: 'left', border: 'none' }}>
-            
-            {/* Phase E: TASK / ASSIGNMENT */}
-            <div className="task-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>TASK / ASSIGNMENT</h2>
-                <button type="button" onClick={openCreateTaskModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Buat Task</button>
-              </div>
-              <div className="event-grid">
-                {tasks.map(task => (
-                  <div key={task.id} className="task-card">
-                    <div className="task-header">
-                      <h3 className="task-title">{task.title}</h3>
-                      <span className={`task-status status-${task.status}`}>{task.status.replace('_', ' ')}</span>
-                    </div>
-                    <p className="task-desc">{task.description}</p>
-                    <div className="task-meta">
-                      <span>📅 Deadline: {formatDate(task.deadline)}</span>
-                      <span>👤 Terakhir Diupdate: {task.profiles?.full_name || 'Belum ada'}</span>
-                    </div>
-                    <div className="progress-container"><div className="progress-bar" style={{ width: `${task.progress_percent}%` }}></div></div>
-                    <span style={{ fontSize: '0.8rem', textAlign: 'right' }}>{task.progress_percent}%</span>
-                    
-                    <div className="task-actions" style={{ marginTop: '1rem' }}>
-                      <button type="button" onClick={() => openTaskDetail(task, 'detail_dosen')} className="btn btn-primary btn-small">Lihat Detail</button>
-                      <button type="button" onClick={() => handleDeleteTask(task.id)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--error-color)' }}>Hapus</button>
-                    </div>
-                  </div>
-                ))}
-                {tasks.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada task.</p>}
-              </div>
+        {profile?.role === 'dosen' && (
+          <div className="sidebar-nav">
+            <div className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+              🏠 Dashboard
             </div>
-
-            {/* Phase D: EVENT MANAGEMENT */}
-            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>EVENT MANAGEMENT</h2>
-                <button type="button" onClick={openCreateModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Buat Event</button>
-              </div>
-              <div className="event-grid">
-                {events.map(event => (
-                  <div key={event.id} className="event-card">
-                    <h3>{event.name}</h3>
-                    <p>📅 {formatDate(event.date)}</p>
-                    <p>⏰ {formatTime(event.start_time)} - {formatTime(event.end_time)}</p>
-                    <p>👥 {event.event_members?.length || 0} Panitia Ditugaskan</p>
-                    <div className="event-card-actions">
-                      <button type="button" onClick={() => openEditModal(event)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--accent-color)' }}>Edit</button>
-                      <button type="button" onClick={() => handleDeleteEvent(event.id)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--error-color)' }}>Hapus</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+            <div className={`sidebar-nav-item ${activeTab === 'event' ? 'active' : ''}`} onClick={() => setActiveTab('event')}>
+              📅 Manajemen Event
             </div>
-
-            {/* Phase F: MANAJEMEN PANITIA */}
-            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>MANAJEMEN PANITIA</h2>
-                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                  <label style={{ fontSize: '0.9rem', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} style={{ marginRight: '0.5rem' }} />
-                    Tampilkan Panitia Nonaktif
-                  </label>
-                  <button type="button" onClick={openCreatePanitiaModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Panitia</button>
-                </div>
-              </div>
-              <div className="table-responsive">
-                <table className="monitoring-table">
-                  <thead><tr><th>Nama</th><th>Username</th><th>NIM</th><th>Status</th><th>Aksi</th></tr></thead>
-                  <tbody>
-                    {panitiaList.filter(p => showInactive || p.is_active !== false).map(panitia => (
-                      <tr key={panitia.id}>
-                        <td>{panitia.full_name}</td>
-                        <td>{panitia.username || '-'}</td>
-                        <td>{panitia.nim || '-'}</td>
-                        <td>
-                          {panitia.is_active === false ? <span style={{ color: 'var(--error-color)', fontWeight: 'bold' }}>○ NONAKTIF</span> : <span style={{ color: 'var(--success-color, #10b981)', fontWeight: 'bold' }}>● AKTIF</span>}
-                        </td>
-                        <td>
-                          {panitia.username && (
-                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                              <button type="button" onClick={() => openResetPasswordModal(panitia)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--accent-color)', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>Reset Password</button>
-                              <button type="button" onClick={() => handleToggleActive(panitia)} className="btn btn-primary btn-small" style={{ backgroundColor: panitia.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
-                                {panitia.is_active ? 'Nonaktifkan' : 'Aktifkan'}
-                              </button>
-                              <select 
-                                onChange={(e) => handleQuickAssignShift(e.target.value, panitia.id)}
-                                value=""
-                                className="form-control" 
-                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', width: 'auto', marginLeft: '0.5rem' }}
-                              >
-                                <option value="" disabled>+ Shift Hari Ini</option>
-                                {shiftsList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                              </select>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <div className={`sidebar-nav-item ${activeTab === 'panitia' ? 'active' : ''}`} onClick={() => setActiveTab('panitia')}>
+              👥 Manajemen Panitia
             </div>
-
-            {/* Phase 8A: JADWAL SHIFT */}
-            <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>JADWAL SHIFT</h2>
-                <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().dateStr }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
-              </div>
-              
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
-                {(() => {
-                  const grouped = schedulesList.reduce((acc, curr) => {
-                    const date = curr.schedule_date;
-                    if (!acc[date]) acc[date] = [];
-                    acc[date].push(curr);
-                    return acc;
-                  }, {});
-                  
-                  return Object.keys(grouped).sort((a,b) => b.localeCompare(a)).map(date => (
-                    <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                      <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
-                        {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
-                      </h3>
-                      {grouped[date].map(sched => (
-                        <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                            <div style={{ fontWeight: 'bold', color: '#334155' }}>
-                              {sched.shifts?.start_time.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name.toUpperCase()}
-                            </div>
-                            <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
-                              {sched.shift_members?.length || 0} Panitia
-                            </span>
-                          </div>
-                          <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                            {sched.shifts?.start_time.substring(0,5)} — {sched.shifts?.end_time.substring(0,5)}
-                          </div>
-                          <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
-                            Kelola Member
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  ));
-                })()}
-                {schedulesList.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal shift.</p>}
-              </div>
-            </div>
-
-            {/* Phase 7B: KIOSK STATION MANAGEMENT */}
-            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>MANAJEMEN KIOSK STATION</h2>
-                <button type="button" onClick={() => { setStationFormData({ name: '' }); setPairingResult(null); setFormError(''); setIsStationModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Register Kiosk</button>
-              </div>
-              <div className="table-responsive">
-                <table className="monitoring-table">
-                  <thead><tr><th>Nama Station</th><th>Status</th><th>Aksi</th></tr></thead>
-                  <tbody>
-                    {stationsList.map(station => (
-                      <tr key={station.id}>
-                        <td>{station.name}</td>
-                        <td>
-                          {station.is_active === false ? <span style={{ color: 'var(--error-color)', fontWeight: 'bold' }}>○ INACTIVE</span> : <span style={{ color: 'var(--success-color, #10b981)', fontWeight: 'bold' }}>● ACTIVE</span>}
-                        </td>
-                        <td>
-                            <button type="button" onClick={() => handleToggleStation(station)} className="btn btn-primary btn-small" style={{ backgroundColor: station.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.5rem' }}>
-                              {station.is_active ? 'Disable' : 'Activate'}
-                            </button>
-                            <button type="button" onClick={() => handleRepairStation(station.id)} className="btn btn-primary btn-small" style={{ backgroundColor: '#f59e0b', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
-                              Pair Ulang
-                            </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {stationsList.length === 0 && <tr><td colSpan="3" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada kiosk station.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Phase E: RIWAYAT TUGAS */}
-            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>RIWAYAT TUGAS (AUDIT LOG)</h2>
-              </div>
-              <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
-                {taskHistoryLogs.map(log => {
-                  const createdDate = new Date(log.tasks?.created_at || log.created_at);
-                  const isOldIncomplete = log.tasks?.status !== 'completed' && createdDate < new Date(new Date().setHours(0,0,0,0));
-                  return (
-                    <div key={log.id} className="history-item" style={{ borderLeftColor: isOldIncomplete ? '#ef4444' : '#3b82f6', backgroundColor: isOldIncomplete ? '#fef2f2' : 'transparent', padding: isOldIncomplete ? '0.5rem 1rem' : '0 0 0 1rem', borderRadius: '0 8px 8px 0', marginBottom: '1rem' }}>
-                      <div className="history-meta" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                        <div>
-                          <strong style={{ color: 'var(--primary-color)' }}>{log.profiles?.full_name}</strong>
-                          <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}>mengupdate task: <strong>{log.tasks?.title}</strong></span>
-                        </div>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(log.created_at).toLocaleString('id-ID')}</span>
-                      </div>
-                      {isOldIncomplete && <div style={{ color: '#ef4444', fontSize: '0.8rem', fontWeight: 'bold', marginTop: '0.25rem' }}>⚠️ Tugas lintas hari belum selesai</div>}
-                      {log.previous_status && log.new_status && log.previous_status !== log.new_status && (
-                        <div style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>Status: {log.previous_status.replace('_', ' ')} &rarr; <strong>{log.new_status.replace('_', ' ')}</strong></div>
-                      )}
-                      <p className="history-report" style={{ marginTop: '0.5rem' }}>Catatan: "{log.report}"</p>
-                    </div>
-                  );
-                })}
-                {taskHistoryLogs.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada riwayat update task.</p>}
-              </div>
-            </div>
-
-            {/* RIWAYAT ABSENSI */}
-            <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
-              <div className="event-header">
-                <h2>RIWAYAT ABSENSI KESELURUHAN</h2>
-              </div>
-              <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
-                <table className="monitoring-table">
-                  <thead><tr><th>Tanggal & Waktu</th><th>Nama Panitia</th><th>Status</th><th>Keterangan</th></tr></thead>
-                  <tbody>
-                    {attendanceHistory.map(row => (
-                      <tr key={row.id}>
-                        <td>{new Date(row.waktu_absen).toLocaleString('id-ID')} WIB</td>
-                        <td>{row.profiles?.full_name || 'Unknown'}</td>
-                        <td>
-                          {row.late_status === 'terlambat' ? 
-                            <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
-                            <span className="badge-hadir">Tepat Waktu</span>
-                          }
-                        </td>
-                        <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>{row.late_reason || '-'}</td>
-                      </tr>
-                    ))}
-                    {attendanceHistory.length === 0 && <tr><td colSpan="4" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            {/* Phase C: MONITORING */}
-            <h2 style={{ marginBottom: '1rem' }}>MONITORING ABSENSI HARI INI</h2>
-            {monitoringData && (
-              <div className="table-responsive">
-                <table className="monitoring-table">
-                  <thead><tr><th>Nama Panitia</th><th>Waktu Absen (WIB)</th><th>Status</th><th>Keterangan</th></tr></thead>
-                  <tbody>
-                    {monitoringData.map(row => (
-                      <tr key={row.id}>
-                        <td>{row.full_name}</td>
-                        <td>{row.attendance ? formatTimeWIB(row.attendance.waktu_absen) : '-'}</td>
-                        <td>
-                          {row.attendance ? (
-                            row.attendance.late_status === 'terlambat' ? 
-                              <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
-                              <span className="badge-hadir">Tepat Waktu</span>
-                          ) : (
-                            <span className="badge-belum">Belum Absen</span>
-                          )}
-                        </td>
-                        <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>
-                          {row.attendance?.late_reason || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="dashboard-placeholder panitia-view" style={{ padding: '2rem', display: 'block', textAlign: 'left', border: 'none' }}>
-            <h2>DASHBOARD PANITIA</h2>
-            <p style={{ color: 'var(--text-secondary)' }}>Selamat datang, {profile.full_name}.</p>
-            
-            <div style={{ display: 'flex', gap: '2rem', flexWrap: 'wrap', alignItems: 'flex-start' }}>
-              
-              {/* Phase 8B: JADWAL SAYA & ATTENDANCE */}
-              <div className="attendance-section" style={{ marginTop: '2rem', padding: '2rem', backgroundColor: '#f8fafc', borderRadius: '12px', flex: '1', minWidth: '300px' }}>
-                <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>JADWAL SAYA</h3>
-                
-                {(() => {
-                  const todayStr = getJakartaDayBounds().dateStr;
-                  const todayShifts = mySchedules.filter(x => x.shift_schedules.schedule_date === todayStr);
-                  const upcomingShifts = mySchedules.filter(x => x.shift_schedules.schedule_date > todayStr).slice(0, 3);
-                  
-                  return (
-                    <>
-                      {todayShifts.length > 0 ? (
-                        todayShifts.map(item => {
-                          // Find IN and OUT records for this specific shift
-                          const inRecord = Array.isArray(attendanceData) ? attendanceData.find(a => a.shift_schedule_id === item.schedule_id && a.attendance_type === 'IN') : null;
-                          const outRecord = Array.isArray(attendanceData) ? attendanceData.find(a => a.shift_schedule_id === item.schedule_id && a.attendance_type === 'OUT') : null;
-                          
-                          let statusText = "BELUM ABSEN MASUK";
-                          let statusColor = "badge-belum";
-                          
-                          if (inRecord && !outRecord) {
-                            statusText = "SEDANG BERTUGAS";
-                            statusColor = "badge-hadir";
-                          } else if (inRecord && outRecord) {
-                            statusText = "SHIFT SELESAI";
-                            statusColor = "badge-hadir"; // or a different color for completed
-                          }
-
-                          return (
-                            <div key={item.schedule_id} style={{ padding: '1rem', backgroundColor: 'white', borderRadius: '8px', borderLeft: '4px solid #38bdf8', marginBottom: '1rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                              <div style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#0f172a' }}>
-                                {item.shift_schedules.shifts.start_time.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {item.shift_schedules.shifts.name.toUpperCase()}
-                              </div>
-                              <div style={{ color: '#38bdf8', fontWeight: '600', marginTop: '0.25rem', marginBottom: '1rem' }}>
-                                {item.shift_schedules.shifts.start_time.substring(0,5)} — {item.shift_schedules.shifts.end_time.substring(0,5)}
-                              </div>
-                              
-                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-                                <div>
-                                  <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>IN</div>
-                                  <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: inRecord ? '#0f172a' : '#94a3b8' }}>
-                                    {inRecord ? formatTimeWIB(inRecord.waktu_absen) + ' ✓' : '—'}
-                                  </div>
-                                </div>
-                                <div>
-                                  <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>OUT</div>
-                                  <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: outRecord ? '#0f172a' : '#94a3b8' }}>
-                                    {outRecord ? formatTimeWIB(outRecord.waktu_absen) + ' ✓' : '—'}
-                                  </div>
-                                </div>
-                              </div>
-                              
-                              <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
-                                <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.25rem' }}>STATUS</div>
-                                <span className={statusColor} style={{ display: 'inline-block' }}>{statusText}</span>
-                              </div>
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <p style={{ color: '#94a3b8', textAlign: 'center', margin: '1rem 0' }}>TIDAK ADA SHIFT HARI INI</p>
-                      )}
-                      
-                      {todayShifts.length > 0 && (
-                        <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
-                          <button type="button" onClick={() => navigate('/scan')} className="btn btn-primary" style={{ width: '100%' }}>📷 Scan Absen (Kiosk)</button>
-                        </div>
-                      )}
-                      
-                      {upcomingShifts.length > 0 && (
-                        <div style={{ marginTop: '2rem' }}>
-                          <h4 style={{ fontSize: '1rem', color: '#475569', marginBottom: '0.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem' }}>JADWAL BERIKUTNYA</h4>
-                          {upcomingShifts.map(item => (
-                            <div key={item.schedule_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
-                              <div>
-                                <div style={{ fontWeight: '600', color: '#334155' }}>
-                                  {item.shift_schedules.shifts.name} ({item.shift_schedules.shifts.start_time.substring(0,5)})
-                                </div>
-                                <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
-                                  {new Date(item.shift_schedules.schedule_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </div>
-
-              {/* Phase E: TASK / WORKBOARD */}
-              <div className="task-section" style={{ flex: '2', minWidth: '300px', marginTop: '2rem' }}>
-                <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem' }}>TASK / WORKBOARD</h3>
-                <div className="event-grid">
-                  {tasks.map(task => (
-                    <div key={task.id} className="task-card">
-                      <div className="task-header">
-                        <h3 className="task-title">{task.title}</h3>
-                        <span className={`task-status status-${task.status}`}>{task.status.replace('_', ' ')}</span>
-                      </div>
-                      <p className="task-desc">{task.description}</p>
-                      <div className="task-meta">
-                        <span>📅 {formatDate(task.deadline)}</span>
-                        <span>👤 {task.profiles?.full_name || 'Belum ada'}</span>
-                      </div>
-                      <div className="progress-container"><div className="progress-bar" style={{ width: `${task.progress_percent}%` }}></div></div>
-                      <span style={{ fontSize: '0.8rem', textAlign: 'right' }}>{task.progress_percent}%</span>
-                      <button type="button" onClick={() => openTaskDetail(task, 'detail_panitia')} className="btn btn-primary btn-small" style={{ marginTop: '1rem' }}>Buka Task</button>
-                    </div>
-                  ))}
-                  {tasks.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada task tersedia.</p>}
-                </div>
-              </div>
-
-              {/* Phase D: EVENT / KEGIATAN */}
-              <div className="event-section" style={{ flex: '1', minWidth: '300px', marginTop: '2rem' }}>
-                <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem' }}>KEGIATAN SAYA</h3>
-                <div className="event-grid" style={{ gridTemplateColumns: '1fr' }}>
-                  {events.map(event => (
-                    <div key={event.id} className="event-card">
-                      <h3>{event.name}</h3>
-                      <p>📅 {formatDate(event.date)}</p>
-                      <p>⏰ {formatTime(event.start_time)} - {formatTime(event.end_time)}</p>
-                    </div>
-                  ))}
-                  {events.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada penugasan kegiatan.</p>}
-                </div>
-              </div>
-              
+            <div className={`sidebar-nav-item ${activeTab === 'log' ? 'active' : ''}`} onClick={() => setActiveTab('log')}>
+              📜 Riwayat & Log
             </div>
           </div>
         )}
+
+        <div className="sidebar-footer">
+          <div className="user-menu" style={{ flexDirection: 'column', alignItems: 'flex-start', marginBottom: '1rem', gap: '0.25rem' }}>
+            <span className="user-name" style={{ fontWeight: 'bold' }}>{profile?.full_name}</span>
+            <span className="user-role">{profile?.role}</span>
+          </div>
+          <button onClick={handleLogout} className="btn-logout" style={{ width: '100%' }}>Logout</button>
+        </div>
+      </div>
+
+      <main className="dashboard-main">
+        <div className="dashboard-content">
+          {profile.role === 'dosen' ? (
+            <div className="dashboard-placeholder dosen-view view-inner">
+              
+              {/* TAB 1: DASHBOARD */}
+              {activeTab === 'dashboard' && (
+                <>
+                  <h2 className="page-title">DASHBOARD DOSEN</h2>
+                  <KpiSummary monitoringData={monitoringData} panitiaList={panitiaList} />
+                  
+                  {/* Phase E: TASK / ASSIGNMENT */}
+                  <div className="task-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+                    <div className="event-header">
+                      <h2>TASK / ASSIGNMENT</h2>
+                      <button type="button" onClick={openCreateTaskModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Buat Task</button>
+                    </div>
+                    <div className="event-grid">
+                      {tasks.map(task => (
+                        <div key={task.id} className="task-card">
+                          <div className="task-header">
+                            <h3 className="task-title">{task.title}</h3>
+                            <span className={`task-status status-${task.status}`}>{task.status.replace('_', ' ')}</span>
+                          </div>
+                          <p className="task-desc">{task.description}</p>
+                          <div className="task-meta">
+                            <span>📅 Deadline: {formatDate(task.deadline)}</span>
+                            <span>👤 Terakhir Diupdate: {task.profiles?.full_name || 'Belum ada'}</span>
+                          </div>
+                          <div className="progress-container"><div className="progress-bar" style={{ width: `${task.progress_percent}%` }}></div></div>
+                          <span style={{ fontSize: '0.8rem', textAlign: 'right' }}>{task.progress_percent}%</span>
+                          
+                          <div className="task-actions" style={{ marginTop: '1rem' }}>
+                            <button type="button" onClick={() => openTaskDetail(task, 'detail_dosen')} className="btn btn-primary btn-small">Lihat Detail</button>
+                            <button type="button" onClick={() => handleDeleteTask(task.id)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--error-color)' }}>Hapus</button>
+                          </div>
+                        </div>
+                      ))}
+                      {tasks.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada task.</p>}
+                    </div>
+                  </div>
+
+                  {/* Phase 8A: JADWAL SHIFT */}
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+                    <div className="event-header">
+                      <h2>JADWAL SHIFT</h2>
+                      <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().dateStr }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
+                    </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+                      {(() => {
+                        const grouped = schedulesList.reduce((acc, curr) => {
+                          const date = curr.schedule_date;
+                          if (!acc[date]) acc[date] = [];
+                          acc[date].push(curr);
+                          return acc;
+                        }, {});
+                        
+                        return Object.keys(grouped).sort((a,b) => b.localeCompare(a)).map(date => (
+                          <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                            <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
+                              {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                            </h3>
+                            {grouped[date].map(sched => (
+                              <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                  <div style={{ fontWeight: 'bold', color: '#334155' }}>
+                                    {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
+                                  </div>
+                                  <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
+                                    {sched.shift_members?.length || 0} Panitia
+                                  </span>
+                                </div>
+                                <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                                  {sched.shifts?.start_time?.substring(0,5)} — {sched.shifts?.end_time?.substring(0,5)}
+                                </div>
+                                <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
+                                  Kelola Member
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        ));
+                      })()}
+                      {schedulesList.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal shift.</p>}
+                    </div>
+                  </div>
+
+                  {/* Phase C: MONITORING */}
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+                    <h2 style={{ marginBottom: '1rem' }}>MONITORING ABSENSI HARI INI</h2>
+                    {monitoringData && (
+                      <div className="table-responsive">
+                        <table className="monitoring-table">
+                          <thead><tr><th>Nama Panitia</th><th>Waktu Absen (WIB)</th><th>Status</th><th>Keterangan</th></tr></thead>
+                          <tbody>
+                            {monitoringData.map(row => (
+                              <tr key={row.id}>
+                                <td>{row.full_name}</td>
+                                <td>{row.attendance ? formatTimeWIB(row.attendance.waktu_absen) : '-'}</td>
+                                <td>
+                                  {row.attendance ? (
+                                    row.attendance.late_status === 'terlambat' ? 
+                                      <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
+                                      <span className="badge-hadir">Tepat Waktu</span>
+                                  ) : (
+                                    <span className="badge-belum">Belum Absen</span>
+                                  )}
+                                </td>
+                                <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>
+                                  {row.attendance?.late_reason || '-'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Phase 7B: KIOSK STATION MANAGEMENT */}
+                  <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+                    <div className="event-header">
+                      <h2>MANAJEMEN KIOSK STATION</h2>
+                      <button type="button" onClick={() => { setStationFormData({ name: '' }); setPairingResult(null); setFormError(''); setIsStationModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Register Kiosk</button>
+                    </div>
+                    <div className="table-responsive">
+                      <table className="monitoring-table">
+                        <thead><tr><th>Nama Station</th><th>Status</th><th>Aksi</th></tr></thead>
+                        <tbody>
+                          {stationsList.map(station => (
+                            <tr key={station.id}>
+                              <td>{station.name}</td>
+                              <td>
+                                {station.is_active === false ? <span style={{ color: 'var(--error-color)', fontWeight: 'bold' }}>○ INACTIVE</span> : <span style={{ color: 'var(--success-color, #10b981)', fontWeight: 'bold' }}>● ACTIVE</span>}
+                              </td>
+                              <td>
+                                  <button type="button" onClick={() => handleToggleStation(station)} className="btn btn-primary btn-small" style={{ backgroundColor: station.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem', marginRight: '0.5rem' }}>
+                                    {station.is_active ? 'Disable' : 'Activate'}
+                                  </button>
+                                  <button type="button" onClick={() => handleRepairStation(station.id)} className="btn btn-primary btn-small" style={{ backgroundColor: '#f59e0b', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
+                                    Pair Ulang
+                                  </button>
+                              </td>
+                            </tr>
+                          ))}
+                          {stationsList.length === 0 && <tr><td colSpan="3" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada kiosk station.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* TAB 2: MANAJEMEN EVENT */}
+              {activeTab === 'event' && (
+                <>
+                  <h2 className="page-title">MANAJEMEN EVENT</h2>
+                  <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+                    <div className="event-header">
+                      <h2>EVENT MANAGEMENT</h2>
+                      <button type="button" onClick={openCreateModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Buat Event</button>
+                    </div>
+                    <div className="event-grid">
+                      {events.map(event => (
+                        <div key={event.id} className="event-card">
+                          <h3>{event.name}</h3>
+                          <p>📅 {formatDate(event.date)}</p>
+                          <p>⏰ {formatTime(event.start_time)} - {formatTime(event.end_time)}</p>
+                          <p>👥 {event.event_members?.length || 0} Panitia Ditugaskan</p>
+                          <div className="event-card-actions">
+                            <button type="button" onClick={() => openEditModal(event)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--accent-color)' }}>Edit</button>
+                            <button type="button" onClick={() => handleDeleteEvent(event.id)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--error-color)' }}>Hapus</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* TAB 3: MANAJEMEN PANITIA */}
+              {activeTab === 'panitia' && (
+                <>
+                  <h2 className="page-title">MANAJEMEN PANITIA</h2>
+                  <PanitiaTable 
+                    panitiaList={panitiaList}
+                    showInactive={showInactive}
+                    setShowInactive={setShowInactive}
+                    openCreatePanitiaModal={openCreatePanitiaModal}
+                    openResetPasswordModal={openResetPasswordModal}
+                    handleToggleActive={handleToggleActive}
+                    handleQuickAssignShift={handleQuickAssignShift}
+                    shiftsList={shiftsList}
+                  />
+                </>
+              )}
+
+              {/* TAB 4: RIWAYAT & LOG */}
+              {activeTab === 'log' && (
+                <>
+                  <h2 className="page-title">RIWAYAT &amp; LOG</h2>
+                  
+                  {/* Phase E: RIWAYAT TUGAS */}
+                  <div className="event-section section-spacing">
+                    <div className="event-header">
+                      <h2>RIWAYAT TUGAS (AUDIT LOG)</h2>
+                    </div>
+                    <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
+                      {taskHistoryLogs.map(log => {
+                        const createdDate = new Date(log.tasks?.created_at || log.created_at);
+                        const isOldIncomplete = log.tasks?.status !== 'completed' && createdDate < new Date(new Date().setHours(0,0,0,0));
+                        return (
+                          <div key={log.id} className="history-item" style={{ borderLeftColor: isOldIncomplete ? '#ef4444' : '#3b82f6', backgroundColor: isOldIncomplete ? '#fef2f2' : 'transparent', padding: isOldIncomplete ? '0.5rem 1rem' : '0 0 0 1rem', borderRadius: '0 8px 8px 0', marginBottom: '1rem' }}>
+                            <div className="history-meta" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <div>
+                                <strong style={{ color: 'var(--primary-color)' }}>{log.profiles?.full_name}</strong>
+                                <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}>mengupdate task: <strong>{log.tasks?.title}</strong></span>
+                              </div>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(log.created_at).toLocaleString('id-ID')}</span>
+                            </div>
+                            {isOldIncomplete && <div style={{ color: '#ef4444', fontSize: '0.8rem', fontWeight: 'bold', marginTop: '0.25rem' }}>⚠️ Tugas lintas hari belum selesai</div>}
+                            {log.previous_status && log.new_status && log.previous_status !== log.new_status && (
+                              <div style={{ fontSize: '0.85rem', marginTop: '0.25rem' }}>Status: {log.previous_status.replace('_', ' ')} &rarr; <strong>{log.new_status.replace('_', ' ')}</strong></div>
+                            )}
+                            <p className="history-report" style={{ marginTop: '0.5rem' }}>Catatan: "{log.report}"</p>
+                          </div>
+                        );
+                      })}
+                      {taskHistoryLogs.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada riwayat update task.</p>}
+                    </div>
+                  </div>
+
+                  {/* RIWAYAT ABSENSI */}
+                  <div className="event-section section-spacing">
+                    <div className="event-header">
+                      <h2>RIWAYAT ABSENSI KESELURUHAN</h2>
+                    </div>
+                    <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
+                      <table className="monitoring-table">
+                        <thead><tr><th>Tanggal & Waktu</th><th>Nama Panitia</th><th>Status</th><th>Keterangan</th></tr></thead>
+                        <tbody>
+                          {attendanceHistory.map(row => (
+                            <tr key={row.id}>
+                              <td>{new Date(row.waktu_absen).toLocaleString('id-ID')} WIB</td>
+                              <td>{row.profiles?.full_name || 'Unknown'}</td>
+                              <td>
+                                {row.late_status === 'terlambat' ? 
+                                  <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
+                                  <span className="badge-hadir">Tepat Waktu</span>
+                                }
+                              </td>
+                              <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>{row.late_reason || '-'}</td>
+                            </tr>
+                          ))}
+                          {attendanceHistory.length === 0 && <tr><td colSpan="4" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              )}
+
+            </div>
+          ) : (
+            <div className="dashboard-placeholder panitia-view view-inner">
+              
+              {/* IN-PAGE PANITIA TABS */}
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
+                <button 
+                  onClick={() => setActiveTab('dashboard')} 
+                  style={{ background: activeTab === 'dashboard' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'dashboard' ? 'white' : 'var(--text-secondary)', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
+                >
+                  🏠 Dashboard
+                </button>
+                <button 
+                  onClick={() => setActiveTab('tugas')} 
+                  style={{ background: activeTab === 'tugas' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'tugas' ? 'white' : 'var(--text-secondary)', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
+                >
+                  📋 Tugas & Kegiatan
+                </button>
+              </div>
+
+              {activeTab === 'dashboard' && (
+                <>
+                  <h2 className="page-title">DASHBOARD PANITIA</h2>
+                  <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>Selamat datang, {profile.full_name}.</p>
+                  
+                  {/* Phase 8B: JADWAL SAYA & ATTENDANCE */}
+                  <div className="attendance-section attendance-card">
+                    <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>JADWAL SAYA</h3>
+                    
+                    {(() => {
+                      const todayStr = getJakartaDayBounds().dateStr;
+                      const todayShifts = mySchedules.filter(x => x.shift_schedules.schedule_date === todayStr);
+                      const upcomingShifts = mySchedules.filter(x => x.shift_schedules.schedule_date > todayStr).slice(0, 3);
+                      
+                      return (
+                        <>
+                          {todayShifts.length > 0 ? (
+                            todayShifts.map(item => {
+                              // Find IN and OUT records for this specific shift
+                              const inRecord = Array.isArray(attendanceData) ? attendanceData.find(a => a.shift_schedule_id === item.schedule_id && a.attendance_type === 'IN') : null;
+                              const outRecord = Array.isArray(attendanceData) ? attendanceData.find(a => a.shift_schedule_id === item.schedule_id && a.attendance_type === 'OUT') : null;
+                              
+                              let statusText = "BELUM ABSEN MASUK";
+                              let statusColor = "badge-belum";
+                              
+                              if (inRecord && !outRecord) {
+                                statusText = "SEDANG BERTUGAS";
+                                statusColor = "badge-hadir";
+                              } else if (inRecord && outRecord) {
+                                statusText = "SHIFT SELESAI";
+                                statusColor = "badge-hadir"; 
+                              }
+
+                              return (
+                                <div key={item.schedule_id} style={{ padding: '1rem', backgroundColor: 'white', borderRadius: '8px', borderLeft: '4px solid #38bdf8', marginBottom: '1rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                  <div style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#0f172a' }}>
+                                    {item.shift_schedules?.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {item.shift_schedules?.shifts?.name?.toUpperCase()}
+                                  </div>
+                                  <div style={{ color: '#38bdf8', fontWeight: '600', marginTop: '0.25rem', marginBottom: '1rem' }}>
+                                    {item.shift_schedules?.shifts?.start_time?.substring(0,5)} — {item.shift_schedules?.shifts?.end_time?.substring(0,5)}
+                                  </div>
+                                  
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                                    <div>
+                                      <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>IN</div>
+                                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: inRecord ? '#0f172a' : '#94a3b8' }}>
+                                        {inRecord ? formatTimeWIB(inRecord.waktu_absen) + ' ✓' : '—'}
+                                      </div>
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 'bold' }}>OUT</div>
+                                      <div style={{ fontSize: '1.1rem', fontWeight: 'bold', color: outRecord ? '#0f172a' : '#94a3b8' }}>
+                                        {outRecord ? formatTimeWIB(outRecord.waktu_absen) + ' ✓' : '—'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  
+                                  <div style={{ borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem', marginTop: '0.5rem' }}>
+                                    <div style={{ fontSize: '0.8rem', color: '#64748b', marginBottom: '0.25rem' }}>STATUS</div>
+                                    <span className={statusColor} style={{ display: 'inline-block' }}>{statusText}</span>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <p style={{ color: '#94a3b8', textAlign: 'center', margin: '1rem 0' }}>TIDAK ADA SHIFT HARI INI</p>
+                          )}
+                          
+                          {todayShifts.length > 0 && (
+                            <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
+                              <button type="button" onClick={() => navigate('/scan')} className="btn btn-primary" style={{ width: '100%' }}>📷 Scan Absen (Kiosk)</button>
+                            </div>
+                          )}
+                          
+                          {upcomingShifts.length > 0 && (
+                            <div style={{ marginTop: '2rem' }}>
+                              <h4 style={{ fontSize: '1rem', color: '#475569', marginBottom: '0.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem' }}>JADWAL BERIKUTNYA</h4>
+                              {upcomingShifts.map(item => (
+                                <div key={item.schedule_id} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid #f1f5f9' }}>
+                                  <div>
+                                    <div style={{ fontWeight: '600', color: '#334155' }}>
+                                      {item.shift_schedules?.shifts?.name} ({item.shift_schedules?.shifts?.start_time?.substring(0,5)})
+                                    </div>
+                                    <div style={{ fontSize: '0.8rem', color: '#94a3b8' }}>
+                                      {new Date(item.shift_schedules.schedule_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'tugas' && (
+                <>
+                  <h2 className="page-title">TUGAS &amp; KEGIATAN</h2>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                    <TaskList tasks={tasks} formatDate={formatDate} openTaskDetail={openTaskDetail} />
+                    
+                    {/* Phase D: EVENT / KEGIATAN */}
+                    <div className="event-section" style={{ minWidth: '300px', margin: '0' }}>
+                      <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem' }}>KEGIATAN SAYA</h3>
+                      <div className="event-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))' }}>
+                        {events.map(event => (
+                          <div key={event.id} className="event-card">
+                            <h3>{event.name}</h3>
+                            <p>📅 {formatDate(event.date)}</p>
+                            <p>⏰ {formatTime(event.start_time)} - {formatTime(event.end_time)}</p>
+                          </div>
+                        ))}
+                        {events.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada penugasan kegiatan.</p>}
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+
+            </div>
+          )}
+        </div>
       </main>
 
       {/* Modal Phase D: Events */}

@@ -28,7 +28,11 @@ function App() {
   }, []);
 
   if (loading) {
-    return <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh' }}>Memuat...</div>;
+    return (
+      <div className="loader-container">
+        <div className="spinner"></div>
+      </div>
+    );
   }
 
   return (
