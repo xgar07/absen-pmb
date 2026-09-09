@@ -654,7 +654,6 @@ export default function Dashboard() {
                   <h2 className="page-title">MANAJEMEN EVENT</h2>
                   <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
                     <div className="event-header">
-                      <h2>EVENT MANAGEMENT</h2>
                       <button type="button" onClick={openCreateModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Buat Event</button>
                     </div>
                     <div className="event-grid">
@@ -678,7 +677,6 @@ export default function Dashboard() {
               {/* TAB 3: MANAJEMEN PANITIA */}
               {activeTab === 'panitia' && (
                 <>
-                  <h2 className="page-title">MANAJEMEN PANITIA</h2>
                   <PanitiaTable 
                     panitiaList={panitiaList}
                     showInactive={showInactive}
@@ -700,7 +698,7 @@ export default function Dashboard() {
                   {/* Phase E: RIWAYAT TUGAS */}
                   <div className="event-section section-spacing">
                     <div className="event-header">
-                      <h2>RIWAYAT TUGAS (AUDIT LOG)</h2>
+                      
                     </div>
                     <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
                       {taskHistoryLogs.map(log => {
