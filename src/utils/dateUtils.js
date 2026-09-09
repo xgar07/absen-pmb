@@ -23,7 +23,8 @@ export const getJakartaDayBounds = () => {
   
   return { 
     start: startOfDay.toISOString(), 
-    end: startOfNextDay.toISOString() 
+    end: startOfNextDay.toISOString(),
+    dateStr
   };
 };
 

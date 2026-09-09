@@ -99,7 +99,7 @@ export default function Dashboard() {
         setEvents(eventsData || []);
 
         // Phase 8A: Panitia Shifts
-        const todayStr = bounds.start.substring(0, 10);
+        const todayStr = bounds.dateStr;
         const { data: rawMyShifts } = await supabase.from('shift_members').select('schedule_id, shift_schedules(schedule_date, shifts(name, start_time, end_time))').eq('user_id', user.id);
         const validShifts = (rawMyShifts || []).filter(x => x.shift_schedules && x.shift_schedules.schedule_date >= todayStr).sort((a,b) => a.shift_schedules.schedule_date.localeCompare(b.shift_schedules.schedule_date));
         setMySchedules(validShifts);
@@ -420,6 +420,25 @@ export default function Dashboard() {
     finally { setFormLoading(false); }
   };
 
+  const handleQuickAssignShift = async (shiftId, panitiaId) => {
+    if (!shiftId) return;
+    try {
+      setFormLoading(true);
+      const { data, error } = await supabase.rpc('assign_panitia_to_shift_today', {
+        p_shift_id: shiftId,
+        p_user_id: panitiaId
+      });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      window.alert(data.message);
+      fetchDashboardData();
+    } catch (err) {
+      window.alert(err.message || 'Gagal menambahkan shift');
+    } finally {
+      setFormLoading(false);
+    }
+  };
+
   // Formatting helpers
   const formatDate = (dateStr) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(new Date(dateStr));
   const formatTime = (timeStr) => timeStr.substring(0, 5) + ' WIB';
@@ -523,11 +542,20 @@ export default function Dashboard() {
                         </td>
                         <td>
                           {panitia.username && (
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                               <button type="button" onClick={() => openResetPasswordModal(panitia)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--accent-color)', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>Reset Password</button>
                               <button type="button" onClick={() => handleToggleActive(panitia)} className="btn btn-primary btn-small" style={{ backgroundColor: panitia.is_active ? 'var(--error-color)' : '#10b981', padding: '0.25rem 0.5rem', fontSize: '0.8rem' }}>
                                 {panitia.is_active ? 'Nonaktifkan' : 'Aktifkan'}
                               </button>
+                              <select 
+                                onChange={(e) => handleQuickAssignShift(e.target.value, panitia.id)}
+                                value=""
+                                className="form-control" 
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.8rem', width: 'auto', marginLeft: '0.5rem' }}
+                              >
+                                <option value="" disabled>+ Shift Hari Ini</option>
+                                {shiftsList.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                              </select>
                             </div>
                           )}
                         </td>
@@ -542,7 +570,7 @@ export default function Dashboard() {
             <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
               <div className="event-header">
                 <h2>JADWAL SHIFT</h2>
-                <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().start.substring(0,10) }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
+                <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().dateStr }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
@@ -716,7 +744,7 @@ export default function Dashboard() {
                 <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>JADWAL SAYA</h3>
                 
                 {(() => {
-                  const todayStr = getJakartaDayBounds().start.substring(0, 10);
+                  const todayStr = getJakartaDayBounds().dateStr;
                   const todayShifts = mySchedules.filter(x => x.shift_schedules.schedule_date === todayStr);
                   const upcomingShifts = mySchedules.filter(x => x.shift_schedules.schedule_date > todayStr).slice(0, 3);
                   

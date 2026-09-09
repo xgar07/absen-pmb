@@ -69,12 +69,16 @@ export default function Scanner() {
            return;
         }
 
-        let uiError = 'QR TIDAK VALID';
+        let uiError = data?.message || 'QR TIDAK VALID';
         if (errorCode === 'FUTURE_TOKEN') uiError = 'QR BELUM AKTIF';
         if (errorCode === 'EXPIRED_TOKEN') uiError = 'QR KADALUARSA';
-        if (errorCode === 'DUPLICATE') uiError = 'ANDA SUDAH ABSEN';
+        if (errorCode === 'DUPLICATE') uiError = data?.message || 'ANDA SUDAH ABSEN';
         if (errorCode === 'INVALID_SIGNATURE' || errorCode === 'INVALID_PAYLOAD' || errorCode === 'INVALID_FORMAT') uiError = 'QR TIDAK VALID';
         if (errorCode === 'UNAUTHORIZED' || errorCode === 'FORBIDDEN') uiError = 'AKSES DITOLAK';
+        if (errorCode === 'NO_SHIFT') uiError = 'TIDAK ADA JADWAL SHIFT UNTUK ANDA HARI INI';
+        if (errorCode === 'SHIFT_COMPLETED') uiError = 'SHIFT ANDA SUDAH SELESAI (Sudah Absen Masuk & Pulang)';
+        if (errorCode === 'EARLY_ATTENDANCE') uiError = 'BELUM WAKTUNYA SHIFT DIMULAI';
+        if (errorCode === 'SERVER_ERROR') uiError = data?.message || 'TERJADI KESALAHAN SERVER';
         
         setError(uiError);
         setScanStatus('Gagal');
