@@ -195,131 +195,110 @@ export default function Kiosk() {
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#0f172a', color: '#f8fafc', padding: '0', overflow: 'hidden' }}>
       
       {/* Header */}
-      <header style={{ padding: '1.5rem 3rem', borderBottom: '1px solid #1e293b', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#020617' }}>
+      <header style={{ padding: '1.5rem 3rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#020617' }}>
         <div>
           <h1 style={{ fontSize: '1.5rem', fontWeight: '800', letterSpacing: '0.05em', margin: 0, color: '#38bdf8' }}>PMB // ATTENDANCE KIOSK</h1>
-          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginTop: '0.25rem', letterSpacing: '0.1em' }}>SISTEM OPERASIONAL MEJA PENDAFTARAN</p>
         </div>
         <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: '1.25rem', fontWeight: '600', color: '#e2e8f0' }}>{formatDate(currentTime)}</div>
-          <div style={{ fontSize: '2rem', fontWeight: 'bold', color: '#38bdf8', fontFamily: 'monospace' }}>{formatTime(currentTime)}</div>
+          <div style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#38bdf8', fontFamily: 'monospace' }}>{formatTime(currentTime)}</div>
         </div>
       </header>
 
       {/* Main Content */}
-      <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4rem', alignItems: 'center', justifyContent: 'center', maxWidth: '1200px', width: '100%' }}>
-          
-          {/* Instructions Left */}
-          <div style={{ flex: '1 1 400px' }}>
-            {isPaired === false ? (
-              <>
-                <h2 style={{ fontSize: '2.5rem', fontWeight: 'bold', marginBottom: '1.5rem', lineHeight: 1.2 }}>
-                  Kiosk Belum <span style={{ color: '#38bdf8' }}>Terdaftar</span>
-                </h2>
-                <p style={{ fontSize: '1.1rem', color: '#94a3b8', marginBottom: '2rem', lineHeight: 1.6 }}>
-                  Station ini membutuhkan otorisasi dari Dosen untuk dapat beroperasi sebagai Attendance Kiosk resmi.
-                </p>
-                <form onSubmit={handlePairing} style={{ backgroundColor: '#1e293b', padding: '2rem', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
-                  {pairingError && <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', fontSize: '0.9rem', border: '1px solid #7f1d1d' }}>{pairingError}</div>}
-                  <div style={{ marginBottom: '1.5rem' }}>
-                    <label style={{ display: 'block', marginBottom: '0.5rem', color: '#cbd5e1', fontSize: '0.9rem', fontWeight: 'bold' }}>Pairing PIN (6 Digit)</label>
-                    <input 
-                      type="text" 
-                      maxLength="6"
-                      value={pairingCode}
-                      onChange={e => setPairingCode(e.target.value)}
-                      placeholder="000000"
-                      style={{ width: '100%', padding: '1rem', fontSize: '2rem', textAlign: 'center', letterSpacing: '0.5em', borderRadius: '8px', border: '2px solid #334155', backgroundColor: '#0f172a', color: 'white', fontFamily: 'monospace', outline: 'none' }}
-                      required
-                    />
-                  </div>
-                  <button 
-                    type="submit" 
-                    disabled={isPairing || pairingCode.length < 6}
-                    style={{ width: '100%', padding: '1rem', backgroundColor: (isPairing || pairingCode.length < 6) ? '#475569' : '#38bdf8', color: (isPairing || pairingCode.length < 6) ? '#94a3b8' : '#020617', border: 'none', borderRadius: '8px', fontSize: '1.1rem', fontWeight: 'bold', cursor: (isPairing || pairingCode.length < 6) ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
-                  >
-                    {isPairing ? 'Memproses...' : 'Pair Device'}
-                  </button>
-                </form>
-              </>
-            ) : (
-              <>
-                <h2 style={{ fontSize: '3rem', fontWeight: 'bold', marginBottom: '1.5rem', lineHeight: 1.2 }}>
-                  Silakan Scan QR<br/>Untuk Melakukan<br/><span style={{ color: '#38bdf8' }}>Absensi</span>
-                </h2>
-                <p style={{ fontSize: '1.25rem', color: '#94a3b8', marginBottom: '2.5rem', maxWidth: '400px', lineHeight: 1.6 }}>
-                  Pastikan Anda sudah login ke sistem PMB di perangkat Anda, lalu buka menu <strong>Scan Absen</strong>.
-                </p>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '1.5rem', backgroundColor: '#1e293b', padding: '1.25rem 2rem', borderRadius: '12px' }}>
-                    <div style={{ 
-                        width: '16px', height: '16px', borderRadius: '50%', 
-                        backgroundColor: status === 'ACTIVE' ? '#22c55e' : (status === 'EXPIRING' || status === 'WAITING NEW TOKEN' ? '#eab308' : '#ef4444'), 
-                        boxShadow: `0 0 15px ${status === 'ACTIVE' ? '#22c55e' : (status === 'EXPIRING' || status === 'WAITING NEW TOKEN' ? '#eab308' : '#ef4444')}` 
-                    }}></div>
-                    <div>
-                      <div style={{ fontSize: '0.9rem', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.05em' }}>SYSTEM STATUS</div>
-                      <div style={{ fontWeight: 'bold', fontSize: '1.25rem', color: status === 'ACTIVE' ? '#22c55e' : (status === 'EXPIRING' || status === 'WAITING NEW TOKEN' ? '#eab308' : '#ef4444') }}>
-                        {status}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div>
-                    <button onClick={unpairDevice} style={{ background: 'transparent', border: '1px solid #334155', color: '#64748b', padding: '0.5rem 1rem', borderRadius: '6px', fontSize: '0.8rem', cursor: 'pointer', transition: 'all 0.2s' }} onMouseOver={e => {e.target.style.color = '#ef4444'; e.target.style.borderColor = '#ef4444';}} onMouseOut={e => {e.target.style.color = '#64748b'; e.target.style.borderColor = '#334155';}}>
-                      Unpair Device
-                    </button>
-                  </div>
-                </div>
-              </>
-            )}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+        
+        {isPaired === false ? (
+          <div style={{ maxWidth: '500px', width: '100%', textAlign: 'center' }}>
+            <h2 style={{ fontSize: '2.5rem', fontWeight: 'bold', marginBottom: '1rem', lineHeight: 1.2 }}>
+              Kiosk Belum <span style={{ color: '#38bdf8' }}>Terdaftar</span>
+            </h2>
+            <p style={{ fontSize: '1.1rem', color: '#94a3b8', marginBottom: '2.5rem', lineHeight: 1.6 }}>
+              Station ini membutuhkan otorisasi dari Dosen untuk dapat beroperasi sebagai Attendance Kiosk resmi.
+            </p>
+            <form onSubmit={handlePairing} style={{ backgroundColor: '#1e293b', padding: '2.5rem', borderRadius: '16px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)', textAlign: 'left' }}>
+              {pairingError && <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.2)', color: '#fca5a5', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', fontSize: '0.9rem', border: '1px solid #7f1d1d' }}>{pairingError}</div>}
+              <div style={{ marginBottom: '2rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.75rem', color: '#cbd5e1', fontSize: '0.9rem', fontWeight: 'bold' }}>Pairing PIN (6 Digit)</label>
+                <input 
+                  type="text" 
+                  maxLength="6"
+                  value={pairingCode}
+                  onChange={e => setPairingCode(e.target.value)}
+                  placeholder="000000"
+                  style={{ width: '100%', padding: '1.25rem', fontSize: '2.5rem', textAlign: 'center', letterSpacing: '0.5em', borderRadius: '12px', border: '2px solid #334155', backgroundColor: '#0f172a', color: 'white', fontFamily: 'monospace', outline: 'none' }}
+                  required
+                />
+              </div>
+              <button 
+                type="submit" 
+                disabled={isPairing || pairingCode.length < 6}
+                style={{ width: '100%', padding: '1.25rem', backgroundColor: (isPairing || pairingCode.length < 6) ? '#475569' : '#38bdf8', color: (isPairing || pairingCode.length < 6) ? '#94a3b8' : '#020617', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: 'bold', cursor: (isPairing || pairingCode.length < 6) ? 'not-allowed' : 'pointer', transition: 'background-color 0.2s' }}
+              >
+                {isPairing ? 'Memproses...' : 'Pair Device'}
+              </button>
+            </form>
           </div>
-          
-          {/* QR Display Right */}
-          {isPaired !== false && (
-            <div style={{ backgroundColor: 'white', padding: '3.5rem', borderRadius: '24px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '600px', width: '100%' }}>
+            
+            {/* QR Section */}
+            <div style={{ backgroundColor: 'white', padding: '2rem', borderRadius: '24px', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)', marginBottom: '2rem' }}>
               {currentToken ? (
-                <>
-                  <div style={{ padding: '1.5rem', border: '4px solid #f1f5f9', borderRadius: '16px', backgroundColor: 'white' }}>
-                     <QRCodeSVG value={currentToken} size={400} level="M" includeMargin={true} />
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginTop: '2.5rem', padding: '0 1rem' }}>
-                    <span style={{ fontSize: '1.2rem', color: '#64748b', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Valid for</span>
-                    <div style={{ fontSize: '3.5rem', fontWeight: 'bold', fontFamily: 'monospace', color: countdown <= 10 ? '#ef4444' : '#0f172a', transition: 'color 0.3s', lineHeight: 1 }}>
-                      00:{countdown.toString().padStart(2, '0')}
-                    </div>
-                  </div>
-                  {/* Progress bar visual for countdown */}
-                  <div style={{ width: '100%', height: '8px', backgroundColor: '#f1f5f9', borderRadius: '4px', marginTop: '1.5rem', overflow: 'hidden' }}>
-                    <div style={{ width: `${(countdown / 60) * 100}%`, height: '100%', backgroundColor: countdown <= 10 ? '#ef4444' : '#38bdf8', transition: 'width 1s linear, background-color 0.3s' }}></div>
-                  </div>
-                </>
+                <QRCodeSVG value={currentToken} size={320} level="M" includeMargin={true} />
               ) : (
-                <div style={{ width: 400, height: 400, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '4px dashed #cbd5e1', borderRadius: '16px', backgroundColor: '#f8fafc', padding: '2rem', textAlign: 'center' }}>
-                  <p style={{ color: status.includes('PAIR ULANG') ? '#f59e0b' : '#ef4444', fontWeight: 'bold', fontSize: '1.2rem', marginBottom: '1rem' }}>
+                <div style={{ width: 320, height: 320, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', border: '4px dashed #cbd5e1', borderRadius: '16px', backgroundColor: '#f8fafc', padding: '1rem', textAlign: 'center' }}>
+                  <p style={{ color: status.includes('PAIR ULANG') ? '#f59e0b' : '#ef4444', fontWeight: 'bold', fontSize: '1.1rem', marginBottom: '1rem' }}>
                     {status === 'STATION DINONAKTIFKAN' ? 'STATION DINONAKTIFKAN' : (status === 'STATION PERLU DI-PAIR ULANG' ? 'STATION PERLU DI-PAIR ULANG' : 'AKSES DITOLAK / DISABLED')}
                   </p>
-                  
-                  {status === 'STATION DINONAKTIFKAN' && (
-                    <p style={{ color: '#64748b', fontSize: '1rem' }}>Kiosk ini sedang tidak diizinkan untuk digunakan.<br/><br/>Hubungi Dosen/PJ.</p>
-                  )}
-                  
                   {status === 'STATION PERLU DI-PAIR ULANG' && (
-                    <>
-                      <p style={{ color: '#64748b', fontSize: '1rem', marginBottom: '1.5rem' }}>Credential Kiosk ini telah direset oleh administrator.<br/><br/>Silakan minta Pairing Code dari Dosen.</p>
-                      <button onClick={unpairDevice} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-                        PAIR ULANG
-                      </button>
-                    </>
+                    <button onClick={unpairDevice} style={{ padding: '0.75rem 1.5rem', backgroundColor: '#38bdf8', color: '#0f172a', border: 'none', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                      PAIR ULANG
+                    </button>
                   )}
                 </div>
               )}
             </div>
-          )}
-          
-        </div>
+
+            {/* Instructions */}
+            <h2 style={{ fontSize: '1.75rem', fontWeight: 'bold', margin: '0 0 0.5rem 0' }}>
+              Arahkan kamera HP ke QR ini
+            </h2>
+            <p style={{ fontSize: '1.1rem', color: '#94a3b8', margin: '0 0 2rem 0' }}>
+              Buka menu scan absen di sistem PMB
+            </p>
+
+            {/* Timer Progress Bar */}
+            {currentToken && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', width: '100%', maxWidth: '400px', marginBottom: '3rem' }}>
+                <span style={{ fontSize: '1rem', color: '#cbd5e1', fontWeight: '600' }}>Berlaku</span>
+                <div style={{ flex: 1, height: '8px', backgroundColor: '#334155', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{ width: `${(countdown / 60) * 100}%`, height: '100%', backgroundColor: countdown <= 10 ? '#ef4444' : (countdown <= 20 ? '#f59e0b' : '#38bdf8'), transition: 'width 1s linear, background-color 0.3s' }}></div>
+                </div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 'bold', fontFamily: 'monospace', color: countdown <= 10 ? '#ef4444' : '#e2e8f0', minWidth: '65px', textAlign: 'right' }}>
+                  00:{countdown.toString().padStart(2, '0')}
+                </div>
+              </div>
+            )}
+
+            {/* System Status Pill & Unpair */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginTop: currentToken ? '0' : '2rem' }}>
+              <div style={{ display: 'inline-flex', alignItems: 'center', gap: '0.75rem', backgroundColor: '#1e293b', padding: '0.5rem 1.25rem', borderRadius: '9999px', border: '1px solid #334155' }}>
+                <div style={{ 
+                    width: '10px', height: '10px', borderRadius: '50%', 
+                    backgroundColor: status === 'ACTIVE' ? '#22c55e' : (status === 'EXPIRING' || status === 'WAITING NEW TOKEN' ? '#eab308' : '#ef4444'), 
+                    boxShadow: `0 0 10px ${status === 'ACTIVE' ? '#22c55e' : (status === 'EXPIRING' || status === 'WAITING NEW TOKEN' ? '#eab308' : '#ef4444')}` 
+                }}></div>
+                <div style={{ fontSize: '0.9rem', fontWeight: '600', color: '#cbd5e1' }}>
+                  Sistem {status === 'ACTIVE' ? 'aktif' : (status === 'EXPIRING' ? 'aktif (expiring)' : status.toLowerCase())}
+                </div>
+              </div>
+              <button onClick={unpairDevice} style={{ background: 'transparent', border: 'none', color: '#64748b', fontSize: '0.9rem', cursor: 'pointer', textDecoration: 'underline' }} onMouseOver={e => e.target.style.color = '#ef4444'} onMouseOut={e => e.target.style.color = '#64748b'}>
+                Unpair
+              </button>
+            </div>
+            
+          </div>
+        )}
       </main>
     </div>
   );

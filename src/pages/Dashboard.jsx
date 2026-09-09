@@ -149,14 +149,36 @@ export default function Dashboard() {
         if (profilesRes.data) {
           const sortedProfiles = [...profilesRes.data].sort((a, b) => a.full_name.localeCompare(b.full_name));
           setPanitiaList(sortedProfiles);
-          if (attendancesRes.data) {
-            const merged = sortedProfiles
-              .filter(p => scheduledPanitiaIds.has(p.id))
-              .map(p => ({
-                ...p,
-                attendance: attendancesRes.data.find(a => a.panitia_id === p.id) || null
-              }));
-            setMonitoringData(merged);
+          if (attendancesRes.data && schedulesData) {
+            const todaysSchedules = schedulesData.filter(s => s.schedule_date === bounds.dateStr);
+            const shiftAwareMonitoring = [];
+
+            todaysSchedules.forEach(schedule => {
+              (schedule.shift_members || []).forEach(member => {
+                const profile = sortedProfiles.find(p => p.id === member.user_id);
+                if (profile) {
+                   const shiftAtt = attendancesRes.data.filter(a => a.panitia_id === member.user_id && a.shift_schedule_id === schedule.id);
+                   const inAtt = shiftAtt.find(a => a.attendance_type === 'IN');
+                   const outAtt = shiftAtt.find(a => a.attendance_type === 'OUT');
+                   
+                   shiftAwareMonitoring.push({
+                     ...profile,
+                     shift: schedule.shifts,
+                     schedule_id: schedule.id,
+                     in_record: inAtt || null,
+                     out_record: outAtt || null
+                   });
+                }
+              });
+            });
+
+            shiftAwareMonitoring.sort((a, b) => {
+               if (a.full_name !== b.full_name) return a.full_name.localeCompare(b.full_name);
+               if (a.shift && b.shift) return a.shift.start_time.localeCompare(b.shift.start_time);
+               return 0;
+            });
+            
+            setMonitoringData(shiftAwareMonitoring);
           }
         }
 
@@ -169,10 +191,40 @@ export default function Dashboard() {
 
         // Priority 3: History for Dosen
         const [allAttRes, allLogsRes] = await Promise.all([
-          supabase.from('attendance').select('*, profiles:panitia_id(full_name)').order('waktu_absen', { ascending: false }).limit(100),
+          supabase.from('attendance').select('*, profiles:panitia_id(full_name), shift_schedules(schedule_date, shifts(name, start_time, end_time))').order('waktu_absen', { ascending: false }).limit(200),
           supabase.from('task_progress_logs').select('*, tasks:task_id(title, status, created_at), profiles:user_id(full_name)').order('created_at', { ascending: false }).limit(200)
         ]);
-        setAttendanceHistory(allAttRes.data || []);
+        
+        const rawHistory = allAttRes.data || [];
+        const historyMap = new Map();
+        
+        rawHistory.forEach(att => {
+          if (!att.shift_schedule_id) return; // Skip legacy non-shift attendance to prevent errors
+          const key = `${att.panitia_id}_${att.shift_schedule_id}`;
+          if (!historyMap.has(key)) {
+             historyMap.set(key, {
+                panitia_id: att.panitia_id,
+                shift_schedule_id: att.shift_schedule_id,
+                full_name: att.profiles?.full_name || '-',
+                schedule_date: att.shift_schedules?.schedule_date,
+                shift_name: att.shift_schedules?.shifts?.name || '-',
+                shift_start: att.shift_schedules?.shifts?.start_time,
+                shift_end: att.shift_schedules?.shifts?.end_time,
+                in_record: null,
+                out_record: null
+             });
+          }
+          const group = historyMap.get(key);
+          if (att.attendance_type === 'IN') group.in_record = att;
+          if (att.attendance_type === 'OUT') group.out_record = att;
+        });
+
+        const historyArr = Array.from(historyMap.values()).sort((a,b) => {
+           if (a.schedule_date !== b.schedule_date) return (b.schedule_date || '').localeCompare(a.schedule_date || '');
+           return (b.shift_start || '').localeCompare(a.shift_start || '');
+        });
+        
+        setAttendanceHistory(historyArr);
         setTaskHistoryLogs(allLogsRes.data || []);
         setTasks(tasksData || []);
       }
@@ -404,12 +456,11 @@ export default function Dashboard() {
     e.preventDefault();
     setFormLoading(true); setFormError('');
     try {
-      const { error } = await supabase.from('shift_schedules').insert({
-        shift_id: shiftFormData.shift_id,
-        schedule_date: shiftFormData.schedule_date,
-        created_by: profile.id
+      const { data, error } = await supabase.rpc('create_daily_shifts', {
+        p_schedule_date: shiftFormData.schedule_date
       });
       if (error) throw error;
+      if (!data.success) throw new Error(data.error);
       setIsShiftModalOpen(false);
       fetchDashboardData();
     } catch (err) { setFormError(err.message || 'Gagal menyimpan jadwal'); }
@@ -588,26 +639,41 @@ export default function Dashboard() {
                     {monitoringData && (
                       <div className="table-responsive">
                         <table className="monitoring-table">
-                          <thead><tr><th>Nama Panitia</th><th>Waktu Absen (WIB)</th><th>Status</th><th>Keterangan</th></tr></thead>
+                          <thead><tr><th>Nama Panitia</th><th>Shift</th><th>IN</th><th>OUT</th><th>Status</th><th>Keterangan</th></tr></thead>
                           <tbody>
-                            {monitoringData.map(row => (
-                              <tr key={row.id}>
-                                <td>{row.full_name}</td>
-                                <td>{row.attendance ? formatTimeWIB(row.attendance.waktu_absen) : '-'}</td>
-                                <td>
-                                  {row.attendance ? (
-                                    row.attendance.late_status === 'terlambat' ? 
-                                      <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
-                                      <span className="badge-hadir">Tepat Waktu</span>
-                                  ) : (
-                                    <span className="badge-belum">Belum Absen</span>
-                                  )}
-                                </td>
-                                <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>
-                                  {row.attendance?.late_reason || '-'}
-                                </td>
-                              </tr>
-                            ))}
+                            {monitoringData.map(row => {
+                              const reasons = [];
+                              if (row.in_record?.late_reason) reasons.push('Terlambat: ' + row.in_record.late_reason);
+                              if (row.out_record?.early_checkout_reason) reasons.push('Pulang cepat: ' + row.out_record.early_checkout_reason);
+                              const keterangan = reasons.length > 0 ? reasons.join('; ') : '-';
+
+                              let statusEl = <span className="badge-belum">Belum Absen</span>;
+                              if (row.in_record && !row.out_record) {
+                                statusEl = <span className="badge-hadir" style={{ backgroundColor: '#e0f2fe', color: '#0284c7', border: '1px solid #bae6fd' }}>Sedang Bertugas</span>;
+                              } else if (row.in_record && row.out_record) {
+                                if (row.in_record.late_status === 'terlambat') {
+                                  statusEl = <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Selesai (Terlambat)</span>;
+                                } else {
+                                  statusEl = <span className="badge-hadir">Selesai</span>;
+                                }
+                              }
+
+                              return (
+                                <tr key={`${row.id}_${row.schedule_id}`}>
+                                  <td>{row.full_name}</td>
+                                  <td>
+                                    {row.shift?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {row.shift?.name}
+                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{row.shift?.start_time?.substring(0,5)}–{row.shift?.end_time?.substring(0,5)}</div>
+                                  </td>
+                                  <td>{row.in_record ? formatTimeWIB(row.in_record.waktu_absen) : '—'}</td>
+                                  <td>{row.out_record ? formatTimeWIB(row.out_record.waktu_absen) : '—'}</td>
+                                  <td>{statusEl}</td>
+                                  <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>
+                                    {keterangan}
+                                  </td>
+                                </tr>
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>
@@ -732,22 +798,41 @@ export default function Dashboard() {
                     </div>
                     <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
                       <table className="monitoring-table">
-                        <thead><tr><th>Tanggal & Waktu</th><th>Nama Panitia</th><th>Status</th><th>Keterangan</th></tr></thead>
+                        <thead><tr><th>Tanggal</th><th>Nama Panitia</th><th>Shift</th><th>IN</th><th>OUT</th><th>Status</th><th>Keterangan</th></tr></thead>
                         <tbody>
-                          {attendanceHistory.map(row => (
-                            <tr key={row.id}>
-                              <td>{new Date(row.waktu_absen).toLocaleString('id-ID')} WIB</td>
-                              <td>{row.profiles?.full_name || 'Unknown'}</td>
-                              <td>
-                                {row.late_status === 'terlambat' ? 
-                                  <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Terlambat</span> : 
-                                  <span className="badge-hadir">Tepat Waktu</span>
-                                }
-                              </td>
-                              <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>{row.late_reason || '-'}</td>
-                            </tr>
-                          ))}
-                          {attendanceHistory.length === 0 && <tr><td colSpan="4" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
+                          {attendanceHistory.map(row => {
+                            const reasons = [];
+                            if (row.in_record?.late_reason) reasons.push('Terlambat: ' + row.in_record.late_reason);
+                            if (row.out_record?.early_checkout_reason) reasons.push('Pulang cepat: ' + row.out_record.early_checkout_reason);
+                            const keterangan = reasons.length > 0 ? reasons.join('; ') : '-';
+
+                            let statusEl = <span className="badge-belum">Belum Absen</span>;
+                            if (row.in_record && !row.out_record) {
+                              statusEl = <span className="badge-hadir" style={{ backgroundColor: '#e0f2fe', color: '#0284c7', border: '1px solid #bae6fd' }}>Sedang Bertugas</span>;
+                            } else if (row.in_record && row.out_record) {
+                              if (row.in_record.late_status === 'terlambat') {
+                                statusEl = <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Selesai (Terlambat)</span>;
+                              } else {
+                                statusEl = <span className="badge-hadir">Selesai</span>;
+                              }
+                            }
+
+                            return (
+                              <tr key={`${row.panitia_id}_${row.shift_schedule_id}`}>
+                                <td>{row.schedule_date ? new Date(row.schedule_date).toLocaleDateString('id-ID') : '-'}</td>
+                                <td>{row.full_name}</td>
+                                <td>
+                                  {row.shift_start?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {row.shift_name}
+                                  <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{row.shift_start?.substring(0,5)}–{row.shift_end?.substring(0,5)}</div>
+                                </td>
+                                <td>{row.in_record ? formatTimeWIB(row.in_record.waktu_absen) : '—'}</td>
+                                <td>{row.out_record ? formatTimeWIB(row.out_record.waktu_absen) : '—'}</td>
+                                <td>{statusEl}</td>
+                                <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>{keterangan}</td>
+                              </tr>
+                            );
+                          })}
+                          {attendanceHistory.length === 0 && <tr><td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
                         </tbody>
                       </table>
                     </div>
@@ -1079,13 +1164,17 @@ export default function Dashboard() {
                 <input type="date" className="form-control" value={shiftFormData.schedule_date} onChange={e => setShiftFormData({...shiftFormData, schedule_date: e.target.value})} required />
               </div>
               <div className="form-group">
-                <label>Pilih Shift</label>
-                <select className="form-control" value={shiftFormData.shift_id} onChange={e => setShiftFormData({...shiftFormData, shift_id: e.target.value})} required>
-                  <option value="">-- Pilih Shift --</option>
-                  {shiftsList.map(s => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.start_time.substring(0,5)} - {s.end_time.substring(0,5)})</option>
-                  ))}
-                </select>
+                <label>Jadwal yang akan dibuat:</label>
+                <div style={{ backgroundColor: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                  <div style={{ marginBottom: '0.75rem', fontWeight: 'bold', color: '#0f172a' }}>
+                    🌅 SHIFT PAGI
+                    <div style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 'normal', marginTop: '0.25rem' }}>08:00 — 13:00</div>
+                  </div>
+                  <div style={{ fontWeight: 'bold', color: '#0f172a' }}>
+                    ☀️ SHIFT SIANG
+                    <div style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 'normal', marginTop: '0.25rem' }}>12:00 — 17:00</div>
+                  </div>
+                </div>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
                 <button type="button" onClick={() => setIsShiftModalOpen(false)} className="btn btn-primary" style={{ backgroundColor: 'var(--text-secondary)' }}>Batal</button>
