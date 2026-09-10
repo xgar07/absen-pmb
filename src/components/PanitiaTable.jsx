@@ -11,6 +11,7 @@ export default function PanitiaTable({
   shiftsList 
 }) {
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [menuPosition, setMenuPosition] = useState('down');
 
   return (
     <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
@@ -41,7 +42,22 @@ export default function PanitiaTable({
                     <div style={{ display: 'inline-block' }}>
                       <button 
                         type="button" 
-                        onClick={() => setOpenMenuId(openMenuId === panitia.id ? null : panitia.id)} 
+                        onClick={(e) => {
+                          if (openMenuId === panitia.id) {
+                            setOpenMenuId(null);
+                          } else {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const spaceBelow = window.innerHeight - rect.bottom;
+                            const spaceAbove = rect.top;
+                            const estimatedHeight = 180;
+                            if (spaceBelow < estimatedHeight && spaceAbove > spaceBelow) {
+                              setMenuPosition('up');
+                            } else {
+                              setMenuPosition('down');
+                            }
+                            setOpenMenuId(panitia.id);
+                          }
+                        }} 
                         style={{ background: 'none', border: '1px solid #e2e8f0', padding: '0.25rem 0.75rem', borderRadius: '4px', cursor: 'pointer', fontSize: '1.2rem', color: 'var(--text-secondary)' }}
                       >
                         ⋯
@@ -52,7 +68,7 @@ export default function PanitiaTable({
                             style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 9 }} 
                             onClick={() => setOpenMenuId(null)} 
                           />
-                          <div style={{ position: 'absolute', right: '50%', transform: 'translateX(50%)', top: '100%', marginTop: '4px', backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', zIndex: 10, minWidth: '160px', padding: '0.5rem 0', display: 'flex', flexDirection: 'column' }}>
+                          <div style={{ position: 'absolute', right: '50%', transform: 'translateX(50%)', top: menuPosition === 'down' ? '100%' : 'auto', bottom: menuPosition === 'up' ? '100%' : 'auto', marginTop: menuPosition === 'down' ? '4px' : 0, marginBottom: menuPosition === 'up' ? '4px' : 0, backgroundColor: 'white', border: '1px solid #e2e8f0', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)', zIndex: 10, minWidth: '160px', padding: '0.5rem 0', display: 'flex', flexDirection: 'column' }}>
                             <div style={{ padding: '0.5rem 1rem', borderBottom: '1px solid #f1f5f9', marginBottom: '0.25rem', textAlign: 'left', fontSize: '0.85rem', color: 'var(--text-secondary)', fontWeight: 'bold' }}>Kelola Shift</div>
                             {shiftsList.map(s => (
                               <button key={s.id} onClick={() => { handleQuickAssignShift(s.id, panitia.id); setOpenMenuId(null); }} style={{ background: 'none', border: 'none', padding: '0.5rem 1rem', textAlign: 'left', cursor: 'pointer', fontSize: '0.9rem', color: 'var(--primary-color)' }}>+ {s.name}</button>
