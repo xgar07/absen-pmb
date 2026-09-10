@@ -92,6 +92,28 @@ export default function Dashboard() {
   const [isMemberModalOpen, setIsMemberModalOpen] = useState(false);
   const [selectedSchedule, setSelectedSchedule] = useState(null);
   const [memberFormData, setMemberFormData] = useState({ selectedPanitia: [] });
+  const [scheduleDisplayLimit, setScheduleDisplayLimit] = useState(7);
+  const [showPastSchedules, setShowPastSchedules] = useState(false);
+
+  const isShiftEnded = (schedule) => {
+    if (!schedule?.schedule_date || !schedule?.shifts?.end_time) return false;
+    const endDateTimeStr = `${schedule.schedule_date}T${schedule.shifts.end_time}`;
+    const nowJakarta = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    const endJakarta = new Date(new Date(endDateTimeStr).toLocaleString('en-US', { timeZone: 'Asia/Jakarta' }));
+    return nowJakarta > endJakarta;
+  };
+
+  const handleOpenMemberModal = (schedule) => {
+    if (isShiftEnded(schedule)) {
+      const confirmed = window.confirm(
+        `Shift ${schedule.shifts?.name} tanggal ${new Date(schedule.schedule_date).toLocaleDateString('id-ID')} sudah berakhir. Perubahan anggota tidak akan berpengaruh ke absensi shift ini. Lanjutkan mengedit?`
+      );
+      if (!confirmed) return;
+    }
+    setSelectedSchedule(schedule);
+    setMemberFormData({ selectedPanitia: (schedule.shift_members || []).map(m => m.user_id) });
+    setIsMemberModalOpen(true);
+  };
 
   const fetchDashboardData = async () => {
     try {
@@ -669,7 +691,7 @@ export default function Dashboard() {
             <div className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
               🏠 Dashboard
             </div>
-            <div className={`sidebar-nav-item ${activeTab === 'jadwal' ? 'active' : ''}`} onClick={() => setActiveTab('jadwal')}>
+            <div className={`sidebar-nav-item ${activeTab === 'jadwal' ? 'active' : ''}`} onClick={() => { setActiveTab('jadwal'); setScheduleDisplayLimit(7); setShowPastSchedules(false); }}>
               📅 Jadwal Shift
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'event' ? 'active' : ''}`} onClick={() => setActiveTab('event')}>
@@ -807,7 +829,7 @@ export default function Dashboard() {
                   <div className="event-section" style={{ marginTop: '2rem', marginBottom: '2rem' }}>
                     <div className="event-header">
                       <h2 style={{ fontSize: '1.1rem' }}>JADWAL HARI INI & BESOK</h2>
-                      <button type="button" onClick={() => setActiveTab('jadwal')} className="btn btn-primary btn-small" style={{ width: 'auto', backgroundColor: 'var(--text-secondary)' }}>
+                      <button type="button" onClick={() => { setActiveTab('jadwal'); setScheduleDisplayLimit(7); setShowPastSchedules(false); }} className="btn btn-primary btn-small" style={{ width: 'auto', backgroundColor: 'var(--text-secondary)' }}>
                         Lihat Semua Jadwal
                       </button>
                     </div>
@@ -845,7 +867,7 @@ export default function Dashboard() {
                                   {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · <strong>{sched.shift_members?.length || 0} Panitia</strong>
                                 </div>
                               </div>
-                              <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ padding: '0.4rem 0.8rem' }}>
+                              <button onClick={() => handleOpenMemberModal(sched)} className="btn btn-primary btn-small" style={{ padding: '0.4rem 0.8rem' }}>
                                 Kelola
                               </button>
                             </div>
@@ -1122,40 +1144,71 @@ export default function Dashboard() {
                       <button type="button" onClick={() => { setShiftFormData({ shift_id: shiftsList[0]?.id || '', schedule_date: getJakartaDayBounds().dateStr }); setFormError(''); setIsShiftModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Jadwal</button>
                     </div>
                     
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem' }}>
+                    <div>
                       {(() => {
-                        const grouped = schedulesList.reduce((acc, curr) => {
+                        const todayStr = getJakartaDayBounds().dateStr;
+                        const filteredSchedules = showPastSchedules 
+                          ? schedulesList 
+                          : schedulesList.filter(s => s.schedule_date >= todayStr);
+
+                        const grouped = filteredSchedules.reduce((acc, curr) => {
                           const date = curr.schedule_date;
                           if (!acc[date]) acc[date] = [];
                           acc[date].push(curr);
                           return acc;
                         }, {});
                         
-                        return Object.keys(grouped).sort((a,b) => b.localeCompare(a)).map(date => (
-                          <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
-                            <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
-                              {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
-                            </h3>
-                            {grouped[date].map(sched => (
-                              <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                                  <div style={{ fontWeight: 'bold', color: '#334155' }}>
-                                    {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
-                                  </div>
-                                  <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
-                                    {sched.shift_members?.length || 0} Panitia
-                                  </span>
+                        Object.keys(grouped).forEach(date => {
+                          grouped[date].sort((a, b) => (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || ''));
+                        });
+                        
+                        const allDates = Object.keys(grouped).sort((a,b) => a.localeCompare(b));
+                        const datesToShow = allDates.slice(0, scheduleDisplayLimit);
+                        const hasMore = allDates.length > scheduleDisplayLimit;
+
+                        return (
+                          <>
+                            <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: '1rem', width: '100%' }}>
+                              <button type="button" onClick={() => setShowPastSchedules(prev => !prev)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--text-secondary)', width: 'auto' }}>
+                                {showPastSchedules ? 'Sembunyikan Jadwal Lampau' : 'Tampilkan Jadwal Lampau'}
+                              </button>
+                            </div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: '1rem', width: '100%' }}>
+                              {datesToShow.map(date => (
+                                <div key={date} style={{ backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                                  <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', color: '#0f172a', borderBottom: '2px solid #38bdf8', paddingBottom: '0.5rem' }}>
+                                    {new Date(date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })}
+                                  </h3>
+                                  {grouped[date].map(sched => (
+                                    <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                        <div style={{ fontWeight: 'bold', color: '#334155' }}>
+                                          {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
+                                        </div>
+                                        <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
+                                          {sched.shift_members?.length || 0} Panitia
+                                        </span>
+                                      </div>
+                                      <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
+                                        {sched.shifts?.start_time?.substring(0,5)} — {sched.shifts?.end_time?.substring(0,5)}
+                                      </div>
+                                      <button onClick={() => handleOpenMemberModal(sched)} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
+                                        Kelola Member
+                                      </button>
+                                    </div>
+                                  ))}
                                 </div>
-                                <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
-                                  {sched.shifts?.start_time?.substring(0,5)} — {sched.shifts?.end_time?.substring(0,5)}
-                                </div>
-                                <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: '100%', fontSize: '0.85rem' }}>
-                                  Kelola Member
+                              ))}
+                            </div>
+                            {hasMore && (
+                              <div style={{ textAlign: 'center', marginTop: '1.5rem', width: '100%' }}>
+                                <button type="button" onClick={() => setScheduleDisplayLimit(prev => prev + 7)} className="btn btn-primary" style={{ width: 'auto' }}>
+                                  Muat {Math.min(7, allDates.length - scheduleDisplayLimit)} Hari Berikutnya
                                 </button>
                               </div>
-                            ))}
-                          </div>
-                        ));
+                            )}
+                          </>
+                        );
                       })()}
                       {schedulesList.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal shift.</p>}
                     </div>
