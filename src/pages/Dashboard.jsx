@@ -38,6 +38,8 @@ export default function Dashboard() {
   const [profile, setProfile] = useState(null);
   const [activeTab, setActiveTab] = useState('dashboard');
   
+  const roleLabel = (role) => role === 'panitia' ? 'Petugas' : role === 'dosen' ? 'Dosen' : role;
+  
   // Phase C States
   const [attendanceData, setAttendanceData] = useState(null);
   const [monitoringData, setMonitoringData] = useState(null);
@@ -429,7 +431,7 @@ export default function Dashboard() {
   };
 
   const handleExportAttendance = () => {
-    const headers = ['Tanggal', 'Nama Panitia', 'Shift', 'Jam Mulai', 'Jam Selesai', 'IN', 'OUT', 'Status Telat', 'Alasan Telat', 'Alasan Pulang Cepat'];
+    const headers = ['Tanggal', 'Nama Petugas', 'Shift', 'Jam Mulai', 'Jam Selesai', 'IN', 'OUT', 'Status Telat', 'Alasan Telat', 'Alasan Pulang Cepat'];
     const rows = filteredAttendanceHistory.map(row => [
       row.schedule_date ? new Date(row.schedule_date).toLocaleDateString('id-ID') : '-',
       row.full_name,
@@ -446,7 +448,7 @@ export default function Dashboard() {
   };
 
   const handleExportTaskHistory = () => {
-    const headers = ['Tanggal & Waktu', 'Nama Panitia', 'Judul Task', 'Status Sebelum', 'Status Sesudah', 'Catatan'];
+    const headers = ['Tanggal & Waktu', 'Nama Petugas', 'Judul Task', 'Status Sebelum', 'Status Sesudah', 'Catatan'];
     const rows = filteredTaskHistoryLogs.map(log => [
       new Date(log.created_at).toLocaleString('id-ID'),
       log.profiles?.full_name || '-',
@@ -698,7 +700,7 @@ export default function Dashboard() {
               📅 Manajemen Event
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'panitia' ? 'active' : ''}`} onClick={() => setActiveTab('panitia')}>
-              👥 Manajemen Panitia
+              👥 Manajemen Petugas
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'log' ? 'active' : ''}`} onClick={() => setActiveTab('log')}>
               📜 Riwayat & Log
@@ -709,7 +711,7 @@ export default function Dashboard() {
         <div className="sidebar-footer">
           <div className="user-menu" style={{ flexDirection: 'column', alignItems: 'flex-start', marginBottom: '1rem', gap: '0.25rem' }}>
             <span className="user-name" style={{ fontWeight: 'bold' }}>{profile?.full_name}</span>
-            <span className="user-role">{profile?.role}</span>
+            <span className="user-role">{roleLabel(profile?.role)}</span>
           </div>
           <button onClick={handleLogout} className="btn-logout" style={{ width: '100%' }}>Logout</button>
         </div>
@@ -725,7 +727,7 @@ export default function Dashboard() {
                 <>
                   <div style={{ marginBottom: '2rem' }}>
                     <h2 className="page-title" style={{ marginBottom: '0.25rem' }}>DASHBOARD DOSEN</h2>
-                    <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Pantau kehadiran panitia dan kelancaran kegiatan PMB.</p>
+                    <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Pantau kehadiran petugas dan kelancaran kegiatan PMB.</p>
                   </div>
                   
                   <KpiSummary monitoringData={monitoringData} panitiaList={panitiaList} />
@@ -776,13 +778,13 @@ export default function Dashboard() {
                                     </div>
                                   </div>
                                   <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: accentColor, backgroundColor: 'white', padding: '0.25rem 0.75rem', borderRadius: '999px', border: `1px solid ${borderColor}` }}>
-                                    {group.members.length} Panitia
+                                    {group.members.length} Petugas
                                   </div>
                                 </div>
                                 <div className="table-responsive" style={{ margin: 0, border: 'none' }}>
                                   <table className="monitoring-table" style={{ margin: 0, borderCollapse: 'collapse' }}>
                                     <thead style={{ backgroundColor: 'white' }}>
-                                      <tr><th style={{ borderBottom: `1px solid ${borderColor}` }}>Nama Panitia</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>IN</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>OUT</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>Status</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>Keterangan</th></tr>
+                                      <tr><th style={{ borderBottom: `1px solid ${borderColor}` }}>Nama Petugas</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>IN</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>OUT</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>Status</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>Keterangan</th></tr>
                                     </thead>
                                     <tbody style={{ backgroundColor: 'white' }}>
                                       {group.members.map(row => {
@@ -864,7 +866,7 @@ export default function Dashboard() {
                                   {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {sched.shifts?.name}
                                 </div>
                                 <div style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                                  {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · <strong>{sched.shift_members?.length || 0} Panitia</strong>
+                                  {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · <strong>{sched.shift_members?.length || 0} Petugas</strong>
                                 </div>
                               </div>
                               <button onClick={() => handleOpenMemberModal(sched)} className="btn btn-primary btn-small" style={{ padding: '0.4rem 0.8rem' }}>
@@ -945,7 +947,7 @@ export default function Dashboard() {
                           <h3>{event.name}</h3>
                           <p>📅 {formatDate(event.date)}</p>
                           <p>⏰ {formatTime(event.start_time)} - {formatTime(event.end_time)}</p>
-                          <p>👥 {event.event_members?.length || 0} Panitia Ditugaskan</p>
+                          <p>👥 {event.event_members?.length || 0} Petugas Ditugaskan</p>
                           <div className="event-card-actions">
                             <button type="button" onClick={() => openEditModal(event)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--accent-color)' }}>Edit</button>
                             <button type="button" onClick={() => handleDeleteEvent(event.id)} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--error-color)' }}>Hapus</button>
@@ -957,7 +959,7 @@ export default function Dashboard() {
                 </>
               )}
 
-              {/* TAB 3: MANAJEMEN PANITIA */}
+              {/* TAB 3: MANAJEMEN PETUGAS */}
               {activeTab === 'panitia' && (
                 <>
                   <PanitiaTable 
@@ -1081,12 +1083,12 @@ export default function Dashboard() {
                         </select>
                       </div>
                       <div className="form-group" style={{ margin: 0, flex: '2 1 300px' }}>
-                        <input type="text" className="form-control" placeholder="🔍 Cari Panitia..." value={attendanceSearchQuery} onChange={e => setAttendanceSearchQuery(e.target.value)} />
+                        <input type="text" className="form-control" placeholder="🔍 Cari Petugas..." value={attendanceSearchQuery} onChange={e => setAttendanceSearchQuery(e.target.value)} />
                       </div>
                     </div>
                     <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
                       <table className="monitoring-table">
-                        <thead><tr><th>Tanggal</th><th>Nama Panitia</th><th>Shift</th><th>IN</th><th>OUT</th><th>Status</th><th>Keterangan</th></tr></thead>
+                        <thead><tr><th>Tanggal</th><th>Nama Petugas</th><th>Shift</th><th>IN</th><th>OUT</th><th>Status</th><th>Keterangan</th></tr></thead>
                         <tbody>
                           {filteredAttendanceHistory.map(row => {
                             const reasons = [];
@@ -1186,7 +1188,7 @@ export default function Dashboard() {
                                           {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
                                         </div>
                                         <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
-                                          {sched.shift_members?.length || 0} Panitia
+                                          {sched.shift_members?.length || 0} Petugas
                                         </span>
                                       </div>
                                       <div style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '1rem' }}>
@@ -1238,7 +1240,7 @@ export default function Dashboard() {
 
               {activeTab === 'dashboard' && (
                 <>
-                  <h2 className="page-title">DASHBOARD PANITIA</h2>
+                  <h2 className="page-title">DASHBOARD PETUGAS</h2>
                   <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>Selamat datang, {profile.full_name}.</p>
                   
                   {/* Phase 8B: JADWAL SAYA & ATTENDANCE */}
@@ -1403,7 +1405,7 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="form-group">
-                <label>Tugaskan Panitia</label>
+                <label>Tugaskan Petugas</label>
                 <div className="checkbox-list">
                   {panitiaList.map(panitia => (
                     <label key={panitia.id} className="radio-label">
@@ -1579,14 +1581,14 @@ export default function Dashboard() {
       {isMemberModalOpen && selectedSchedule && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: '600px' }}>
-            <h2 style={{ marginBottom: '0.5rem' }}>Kelola Panitia Shift</h2>
+            <h2 style={{ marginBottom: '0.5rem' }}>Kelola Petugas Shift</h2>
             <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
               {new Date(selectedSchedule.schedule_date).toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} — Shift {selectedSchedule.shifts?.name}
             </p>
             {formError && <div className="alert alert-error">{formError}</div>}
             <form onSubmit={handleUpdateMembers}>
               <div className="form-group">
-                <label>Pilih Panitia yang Bertugas</label>
+                <label>Pilih Petugas yang Bertugas</label>
                 <div style={{ maxHeight: '300px', overflowY: 'auto', border: '1px solid #cbd5e1', borderRadius: '8px', padding: '1rem' }}>
                   {panitiaList.map(p => (
                     <label key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid #f1f5f9' }}>
@@ -1606,7 +1608,7 @@ export default function Dashboard() {
                       <span style={{ fontWeight: '500', color: '#1e293b' }}>{p.full_name}</span>
                     </label>
                   ))}
-                  {panitiaList.length === 0 && <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Belum ada data panitia.</p>}
+                  {panitiaList.length === 0 && <p style={{ color: 'var(--text-secondary)', textAlign: 'center' }}>Belum ada data petugas.</p>}
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>

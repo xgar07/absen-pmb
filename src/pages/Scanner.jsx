@@ -142,7 +142,11 @@ export default function Scanner() {
           setScanStatus('Gagal');
         }
       } else {
-        setError(mapError(data?.error, data?.message));
+        if (data?.error === 'SHIFT_MISSED') {
+           setError('Anda melewatkan jam absen untuk shift terjadwal hari ini');
+        } else {
+           setError(mapError(data?.error, data?.message));
+        }
         setScanStatus('Gagal');
       }
     } catch (err) {
@@ -181,6 +185,10 @@ export default function Scanner() {
            setScanStatus('Menunggu Keterangan');
         } else if (errorCode === 'EXPIRED_TOKEN') {
            setError('QR KADALUARSA saat konfirmasi, silakan scan ulang');
+           setScanStatus('Gagal');
+           setShowConfirm(false);
+        } else if (errorCode === 'SHIFT_MISSED') {
+           setError('Anda melewatkan jam absen untuk shift terjadwal hari ini');
            setScanStatus('Gagal');
            setShowConfirm(false);
         } else {

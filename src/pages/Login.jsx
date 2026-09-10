@@ -68,7 +68,7 @@ export default function Login() {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label htmlFor="identifier">Username (Panitia) / Email (Dosen)</label>
+            <label htmlFor="identifier">Username (Petugas) / Email (Dosen)</label>
             <input
               type="text"
               id="identifier"

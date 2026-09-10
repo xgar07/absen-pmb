@@ -15,13 +15,13 @@ export default function PanitiaTable({
   return (
     <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
       <div className="event-header">
-        <h2>MANAJEMEN PANITIA</h2>
+        <h2>MANAJEMEN PETUGAS</h2>
         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
           <label style={{ fontSize: '0.9rem', cursor: 'pointer' }}>
             <input type="checkbox" checked={showInactive} onChange={e => setShowInactive(e.target.checked)} style={{ marginRight: '0.5rem' }} />
-            Tampilkan Panitia Nonaktif
+            Tampilkan Petugas Nonaktif
           </label>
-          <button type="button" onClick={openCreatePanitiaModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Panitia</button>
+          <button type="button" onClick={openCreatePanitiaModal} className="btn btn-primary" style={{ width: 'auto' }}>+ Tambah Petugas</button>
         </div>
       </div>
       <div className="table-responsive" style={{ overflow: 'visible' }}>
