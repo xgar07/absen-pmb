@@ -691,19 +691,19 @@ export default function Dashboard() {
         {profile?.role === 'dosen' && (
           <div className="sidebar-nav">
             <div className={`sidebar-nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
-              🏠 Dashboard
+              Dashboard
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'jadwal' ? 'active' : ''}`} onClick={() => { setActiveTab('jadwal'); setScheduleDisplayLimit(7); setShowPastSchedules(false); }}>
-              📅 Jadwal Shift
+              Jadwal Shift
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'event' ? 'active' : ''}`} onClick={() => setActiveTab('event')}>
-              📅 Manajemen Event
+              Manajemen Event
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'panitia' ? 'active' : ''}`} onClick={() => setActiveTab('panitia')}>
-              👥 Manajemen Petugas
+              Manajemen Petugas
             </div>
             <div className={`sidebar-nav-item ${activeTab === 'log' ? 'active' : ''}`} onClick={() => setActiveTab('log')}>
-              📜 Riwayat & Log
+              Riwayat & Log
             </div>
           </div>
         )}
@@ -762,7 +762,6 @@ export default function Dashboard() {
                           {shiftGroups.map(group => {
                             const isPagi = group.startTime === '08:00';
                             const accentColor = isPagi ? '#ea580c' : 'var(--primary-color)';
-                            const icon = isPagi ? '🌅' : '☀️';
                             const bgColor = isPagi ? '#fff7ed' : '#f0f9ff';
                             const borderColor = isPagi ? '#fdba74' : '#bae6fd';
 
@@ -771,7 +770,7 @@ export default function Dashboard() {
                                 <div style={{ backgroundColor: bgColor, padding: '1rem 1.5rem', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                   <div>
                                     <h3 style={{ margin: 0, color: accentColor, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
-                                      <span>{icon}</span> {group.name.toUpperCase()}
+                                      {group.name.toUpperCase()}
                                     </h3>
                                     <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem', fontWeight: '500' }}>
                                       {group.startTime} — {group.endTime}
@@ -863,7 +862,7 @@ export default function Dashboard() {
                                   {sched.schedule_date === todayStr ? 'HARI INI' : 'BESOK'}
                                 </div>
                                 <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--primary-color)' }}>
-                                  {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {sched.shifts?.name}
+                                  {sched.shifts?.name}
                                 </div>
                                 <div style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                                   {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · <strong>{sched.shift_members?.length || 0} Petugas</strong>
@@ -1112,7 +1111,7 @@ export default function Dashboard() {
                                 <td>{row.schedule_date ? new Date(row.schedule_date).toLocaleDateString('id-ID') : '-'}</td>
                                 <td>{row.full_name}</td>
                                 <td>
-                                  {row.shift_start?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {row.shift_name}
+                                  {row.shift_name}
                                   <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{row.shift_start?.substring(0,5)}–{row.shift_end?.substring(0,5)}</div>
                                 </td>
                                 <td>{row.in_record ? formatTimeWIB(row.in_record.waktu_absen) : '—'}</td>
@@ -1185,7 +1184,7 @@ export default function Dashboard() {
                                     <div key={sched.id} style={{ backgroundColor: 'white', padding: '1rem', borderRadius: '8px', marginBottom: '0.75rem', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                                         <div style={{ fontWeight: 'bold', color: '#334155' }}>
-                                          {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {sched.shifts?.name?.toUpperCase()}
+                                          SHIFT {sched.shifts?.name?.toUpperCase()}
                                         </div>
                                         <span style={{ fontSize: '0.8rem', backgroundColor: '#e0f2fe', color: '#0369a1', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
                                           {sched.shift_members?.length || 0} Petugas
@@ -1228,13 +1227,13 @@ export default function Dashboard() {
                   onClick={() => setActiveTab('dashboard')} 
                   style={{ background: activeTab === 'dashboard' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'dashboard' ? 'white' : 'var(--text-secondary)', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
                 >
-                  🏠 Dashboard
+                  Dashboard
                 </button>
                 <button 
                   onClick={() => setActiveTab('tugas')} 
                   style={{ background: activeTab === 'tugas' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'tugas' ? 'white' : 'var(--text-secondary)', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
                 >
-                  📋 Tugas & Kegiatan
+                  Tugas & Kegiatan
                 </button>
               </div>
 
@@ -1248,9 +1247,19 @@ export default function Dashboard() {
                     <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>JADWAL SAYA</h3>
                     
                     {(() => {
+                      const sortedMySchedules = [...mySchedules].sort((a, b) => {
+                        const dateA = a.shift_schedules?.schedule_date || '';
+                        const dateB = b.shift_schedules?.schedule_date || '';
+                        if (dateA !== dateB) return dateA.localeCompare(dateB);
+                        
+                        const timeA = a.shift_schedules?.shifts?.start_time || '';
+                        const timeB = b.shift_schedules?.shifts?.start_time || '';
+                        return timeA.localeCompare(timeB);
+                      });
+
                       const todayStr = getJakartaDayBounds().dateStr;
-                      const todayShifts = mySchedules.filter(x => x.shift_schedules.schedule_date === todayStr);
-                      const upcomingShifts = mySchedules.filter(x => x.shift_schedules.schedule_date > todayStr).slice(0, 3);
+                      const todayShifts = sortedMySchedules.filter(x => x.shift_schedules.schedule_date === todayStr);
+                      const upcomingShifts = sortedMySchedules.filter(x => x.shift_schedules.schedule_date > todayStr).slice(0, 3);
                       
                       return (
                         <>
@@ -1274,7 +1283,7 @@ export default function Dashboard() {
                               return (
                                 <div key={item.schedule_id} style={{ padding: '1rem', backgroundColor: 'white', borderRadius: '8px', borderLeft: '4px solid #38bdf8', marginBottom: '1rem', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                                   <div style={{ fontWeight: 'bold', fontSize: '1.1rem', color: '#0f172a' }}>
-                                    {item.shift_schedules?.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} SHIFT {item.shift_schedules?.shifts?.name?.toUpperCase()}
+                                    SHIFT {item.shift_schedules?.shifts?.name?.toUpperCase()}
                                   </div>
                                   <div style={{ color: '#38bdf8', fontWeight: '600', marginTop: '0.25rem', marginBottom: '1rem' }}>
                                     {item.shift_schedules?.shifts?.start_time?.substring(0,5)} — {item.shift_schedules?.shifts?.end_time?.substring(0,5)}
@@ -1559,11 +1568,11 @@ export default function Dashboard() {
                 <label>Jadwal yang akan dibuat:</label>
                 <div style={{ backgroundColor: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
                   <div style={{ marginBottom: '0.75rem', fontWeight: 'bold', color: '#0f172a' }}>
-                    🌅 SHIFT PAGI
+                    SHIFT PAGI
                     <div style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 'normal', marginTop: '0.25rem' }}>08:00 — 13:00</div>
                   </div>
                   <div style={{ fontWeight: 'bold', color: '#0f172a' }}>
-                    ☀️ SHIFT SIANG
+                    SHIFT SIANG
                     <div style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: 'normal', marginTop: '0.25rem' }}>12:00 — 17:00</div>
                   </div>
                 </div>
