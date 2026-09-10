@@ -1,15 +1,17 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
 :root {
-  /* Colors */
+  /* Colors - Institut Widya Pratama Identity */
   --bg-color: #f8fafc;
   --surface-color: #ffffff;
   --text-primary: #0f172a;
-  --text-secondary: #64748b;
-  --primary-color: #3b82f6;
-  --primary-hover: #2563eb;
-  --accent-color: #10b981;
+  --text-secondary: #475569;
+  --primary-color: #1e3a8a; /* Deep Institutional Blue */
+  --primary-hover: #1e40af;
+  --accent-color: #f97316; /* Orange from logo */
   --error-color: #ef4444;
+  --success-color: #10b981;
+  --warning-color: #f59e0b;
   --border-color: #e2e8f0;
   
   /* Typography */
@@ -502,8 +504,11 @@ body {
   margin-bottom: var(--space-sm);
 }
 
-.dosen-view h2 {
+.dosen-view h2.page-title {
   color: var(--primary-color);
+}
+.dosen-view h2:not(.page-title) {
+  color: var(--text-primary);
 }
 
 .panitia-view h2 {

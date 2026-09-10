@@ -54,10 +54,17 @@ export default function Dashboard() {
   const [isTaskModalOpen, setIsTaskModalOpen] = useState(false);
   const [taskModalMode, setTaskModalMode] = useState('create'); // create, edit, detail_dosen, detail_panitia
   const [selectedTask, setSelectedTask] = useState(null);
+  const [taskLogs, setTaskLogs] = useState([]);
   const [taskFormData, setTaskFormData] = useState({ title: '', description: '', deadline: '' });
   const [myActivityTasks, setMyActivityTasks] = useState([]);
   const [attendanceHistory, setAttendanceHistory] = useState([]);
   const [taskHistoryLogs, setTaskHistoryLogs] = useState([]);
+  const [taskAuditLogs, setTaskAuditLogs] = useState([]);
+  const [logDateFrom, setLogDateFrom] = useState('');
+  const [logDateTo, setLogDateTo] = useState('');
+  const [attendanceShiftFilter, setAttendanceShiftFilter] = useState('all');
+  const [attendanceStatusFilter, setAttendanceStatusFilter] = useState('all');
+  const [attendanceSearchQuery, setAttendanceSearchQuery] = useState('');
   const [progressFormData, setProgressFormData] = useState({ progress: 0, report: '' });
 
   // Phase F States
@@ -134,13 +141,13 @@ export default function Dashboard() {
         setMySchedules(validShifts);
 
         // Tasks (Phase E) - Panitia sees all
-        const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name), profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+        const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name, role), profiles:last_updated_by(full_name)').eq('is_deleted', false).order('deadline', { ascending: true }).order('created_at', { ascending: false });
 
         // Priority 4: Tasks I Interacted With
         const { data: interactedTasksData } = await supabase.from('task_progress_logs').select('task_id').eq('user_id', user.id);
         const interactedIds = [...new Set((interactedTasksData || []).map(log => log.task_id))];
         if (interactedIds.length > 0) {
-          const { data: myActivityTasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name), profiles:last_updated_by(full_name)').in('id', interactedIds).order('updated_at', { ascending: false });
+          const { data: myActivityTasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name, role), profiles:last_updated_by(full_name)').eq('is_deleted', false).in('id', interactedIds).order('updated_at', { ascending: false });
           setMyActivityTasks(myActivityTasksData || []);
         } else {
           setMyActivityTasks([]);
@@ -212,12 +219,13 @@ export default function Dashboard() {
         setEvents(eventsData || []);
 
         // Tasks (Phase E) - Dosen sees own
-        const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name), profiles:last_updated_by(full_name)').order('deadline', { ascending: true }).order('created_at', { ascending: false });
+        const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name, role), profiles:last_updated_by(full_name)').eq('is_deleted', false).order('deadline', { ascending: true }).order('created_at', { ascending: false });
 
         // Priority 3: History for Dosen
-        const [allAttRes, allLogsRes] = await Promise.all([
-          supabase.from('attendance').select('*, profiles:panitia_id(full_name), shift_schedules(schedule_date, shifts(name, start_time, end_time))').order('waktu_absen', { ascending: false }).limit(200),
-          supabase.from('task_progress_logs').select('*, tasks:task_id(title, status, created_at), profiles:user_id(full_name)').order('created_at', { ascending: false }).limit(200)
+        const [allAttRes, allLogsRes, allAuditRes] = await Promise.all([
+          supabase.from('attendance').select('*, profiles:panitia_id(full_name), shift_schedules(schedule_date, shifts(name, start_time, end_time))').order('waktu_absen', { ascending: false }).limit(1000),
+          supabase.from('task_progress_logs').select('*, tasks:task_id(title, status, created_at), profiles:user_id(full_name)').order('created_at', { ascending: false }).limit(1000),
+          supabase.from('task_audit_logs').select('*, profiles:performed_by(full_name)').order('created_at', { ascending: false }).limit(1000)
         ]);
         
         const rawHistory = allAttRes.data || [];
@@ -251,6 +259,7 @@ export default function Dashboard() {
         
         setAttendanceHistory(historyArr);
         setTaskHistoryLogs(allLogsRes.data || []);
+        setTaskAuditLogs(allAuditRes.data || []);
         setTasks(tasksData || []);
       }
     } catch (error) {
@@ -338,10 +347,11 @@ export default function Dashboard() {
     e.preventDefault(); setFormError(''); setFormLoading(true);
     try {
       if (!taskFormData.title || !taskFormData.deadline) throw new Error('Judul dan Deadline wajib');
-      const { error } = await supabase.from('tasks').insert({
-        title: taskFormData.title, description: taskFormData.description, deadline: taskFormData.deadline, created_by: profile.id
+      const { data, error } = await supabase.rpc('create_task_logged', {
+        p_title: taskFormData.title, p_description: taskFormData.description, p_deadline: taskFormData.deadline
       });
       if (error) throw error;
+      if (!data.success) throw new Error(data.error);
       setIsTaskModalOpen(false); fetchDashboardData();
     } catch (err) { setFormError(err.message); } finally { setFormLoading(false); }
   };
@@ -350,10 +360,11 @@ export default function Dashboard() {
     e.preventDefault(); setFormError(''); setFormLoading(true);
     try {
       if (!taskFormData.title || !taskFormData.deadline) throw new Error('Judul dan Deadline wajib');
-      const { error } = await supabase.from('tasks').update({
-        title: taskFormData.title, description: taskFormData.description, deadline: taskFormData.deadline
-      }).eq('id', selectedTask.id);
+      const { data, error } = await supabase.rpc('edit_task_logged', {
+        p_task_id: selectedTask.id, p_title: taskFormData.title, p_description: taskFormData.description, p_deadline: taskFormData.deadline
+      });
       if (error) throw error;
+      if (!data.success) throw new Error(data.error);
       setIsTaskModalOpen(false); fetchDashboardData();
     } catch (err) { setFormError(err.message); } finally { setFormLoading(false); }
   };
@@ -387,13 +398,17 @@ export default function Dashboard() {
 
   const handleDeleteTask = async (id) => {
     if (!window.confirm('Hapus task?')) return;
-    await supabase.from('tasks').delete().eq('id', id);
-    fetchDashboardData();
+    try {
+      const { data, error } = await supabase.rpc('delete_task_logged', { p_task_id: id });
+      if (error) throw error;
+      if (!data.success) throw new Error(data.error);
+      fetchDashboardData();
+    } catch (err) { alert(err.message); }
   };
 
   const handleExportAttendance = () => {
     const headers = ['Tanggal', 'Nama Panitia', 'Shift', 'Jam Mulai', 'Jam Selesai', 'IN', 'OUT', 'Status Telat', 'Alasan Telat', 'Alasan Pulang Cepat'];
-    const rows = attendanceHistory.map(row => [
+    const rows = filteredAttendanceHistory.map(row => [
       row.schedule_date ? new Date(row.schedule_date).toLocaleDateString('id-ID') : '-',
       row.full_name,
       row.shift_name,
@@ -405,13 +420,12 @@ export default function Dashboard() {
       row.in_record?.late_reason || '-',
       row.out_record?.early_checkout_reason || '-'
     ]);
-    const todayStr = getJakartaDayBounds().dateStr;
-    downloadCSV(`riwayat-absensi-pmb-${todayStr}.csv`, headers, rows);
+    downloadCSV(`riwayat-absensi-pmb-${logDateFrom || 'semua'}-sd-${logDateTo || 'semua'}.csv`, headers, rows);
   };
 
   const handleExportTaskHistory = () => {
     const headers = ['Tanggal & Waktu', 'Nama Panitia', 'Judul Task', 'Status Sebelum', 'Status Sesudah', 'Catatan'];
-    const rows = taskHistoryLogs.map(log => [
+    const rows = filteredTaskHistoryLogs.map(log => [
       new Date(log.created_at).toLocaleString('id-ID'),
       log.profiles?.full_name || '-',
       log.tasks?.title || '-',
@@ -419,8 +433,19 @@ export default function Dashboard() {
       log.new_status?.replace('_', ' ') || '-',
       log.report || '-'
     ]);
-    const todayStr = getJakartaDayBounds().dateStr;
-    downloadCSV(`riwayat-tugas-pmb-${todayStr}.csv`, headers, rows);
+    downloadCSV(`riwayat-tugas-pmb-${logDateFrom || 'semua'}-sd-${logDateTo || 'semua'}.csv`, headers, rows);
+  };
+
+  const handleExportTaskAuditLogs = () => {
+    const headers = ['Tanggal & Waktu', 'Aksi', 'Judul Task', 'Dilakukan Oleh', 'Detail'];
+    const rows = filteredTaskAuditLogs.map(log => [
+      new Date(log.created_at).toLocaleString('id-ID'),
+      log.action.toUpperCase(),
+      log.task_title_snapshot || '-',
+      log.profiles?.full_name || '-',
+      log.detail ? JSON.stringify(log.detail) : '-'
+    ]);
+    downloadCSV(`audit-tugas-pmb-${logDateFrom || 'semua'}-sd-${logDateTo || 'semua'}.csv`, headers, rows);
   };
 
   // ============================
@@ -582,6 +607,50 @@ export default function Dashboard() {
   const formatDate = (dateStr) => new Intl.DateTimeFormat('id-ID', { dateStyle: 'long' }).format(new Date(dateStr));
   const formatTime = (timeStr) => timeStr.substring(0, 5) + ' WIB';
 
+  const filteredAttendanceHistory = attendanceHistory.filter(row => {
+    if (logDateFrom && row.schedule_date < logDateFrom) return false;
+    if (logDateTo && row.schedule_date > logDateTo) return false;
+    
+    if (attendanceShiftFilter !== 'all' && row.shift_name !== attendanceShiftFilter) return false;
+    
+    if (attendanceSearchQuery) {
+      const q = attendanceSearchQuery.toLowerCase();
+      if (!row.full_name?.toLowerCase().includes(q) && !row.username?.toLowerCase().includes(q) && !row.nim?.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+
+    if (attendanceStatusFilter !== 'all') {
+      let currentStatus = 'Belum Absen';
+      if (row.in_record && !row.out_record) {
+        currentStatus = 'Sedang Bertugas';
+      } else if (row.in_record && row.out_record) {
+        if (row.in_record.late_status === 'terlambat') {
+          currentStatus = 'Terlambat';
+        } else {
+          currentStatus = 'Selesai';
+        }
+      }
+      if (currentStatus !== attendanceStatusFilter) return false;
+    }
+
+    return true;
+  });
+
+  const filteredTaskHistoryLogs = taskHistoryLogs.filter(log => {
+    const logDate = log.created_at?.substring(0, 10);
+    if (logDateFrom && logDate < logDateFrom) return false;
+    if (logDateTo && logDate > logDateTo) return false;
+    return true;
+  });
+
+  const filteredTaskAuditLogs = taskAuditLogs.filter(log => {
+    const logDate = log.created_at?.substring(0, 10);
+    if (logDateFrom && logDate < logDateFrom) return false;
+    if (logDateTo && logDate > logDateTo) return false;
+    return true;
+  });
+
   if (loading) return (
     <div className="loader-container">
       <div className="spinner"></div>
@@ -632,33 +701,113 @@ export default function Dashboard() {
               {/* TAB 1: DASHBOARD */}
               {activeTab === 'dashboard' && (
                 <>
-                  <h2 className="page-title">DASHBOARD DOSEN</h2>
+                  <div style={{ marginBottom: '2rem' }}>
+                    <h2 className="page-title" style={{ marginBottom: '0.25rem' }}>DASHBOARD DOSEN</h2>
+                    <p style={{ color: 'var(--text-secondary)', margin: 0 }}>Pantau kehadiran panitia dan kelancaran kegiatan PMB.</p>
+                  </div>
+                  
                   <KpiSummary monitoringData={monitoringData} panitiaList={panitiaList} />
                   
-                  {/* Phase E: TASK / ASSIGNMENT */}
-                  <div className="event-section" style={{ marginTop: '2rem' }}>
-                    <div className="event-header">
-                      <h2>TUGAS (TODO & IN PROGRESS)</h2>
-                      <button type="button" onClick={openCreateTaskModal} className="btn btn-primary btn-small" style={{ width: 'auto' }}>+ Buat Task</button>
-                    </div>
-                    {tasks.length > 0 ? (
-                      <TaskList 
-                        tasks={tasks} 
-                        formatDate={formatDate}
-                        openTaskDetail={openTaskDetail} 
-                        openEditTaskModal={openEditTaskModal}
-                        handleDeleteTask={handleDeleteTask}
-                      />
-                    ) : (
-                      <p style={{ color: 'var(--text-secondary)' }}>Belum ada task.</p>
-                    )}
+                  {/* Phase C: MONITORING (GROUPED BY SHIFT) */}
+                  <div className="event-section" style={{ marginTop: '2.5rem', marginBottom: '2rem' }}>
+                    <h2 style={{ marginBottom: '1.5rem', borderBottom: '2px solid #e2e8f0', paddingBottom: '0.5rem', fontSize: '1.25rem' }}>MONITORING ABSENSI HARI INI</h2>
+                    {(() => {
+                      if (!monitoringData || monitoringData.length === 0) {
+                        return <p style={{ color: 'var(--text-secondary)' }}>Belum ada data monitoring untuk hari ini.</p>;
+                      }
+
+                      // Group monitoring data by shift
+                      const shiftsMap = new Map();
+                      monitoringData.forEach(row => {
+                        const shiftKey = `${row.shift?.name || 'Unknown'}_${row.shift?.start_time || '00:00'}`;
+                        if (!shiftsMap.has(shiftKey)) {
+                          shiftsMap.set(shiftKey, {
+                            name: row.shift?.name || 'Unknown',
+                            startTime: row.shift?.start_time?.substring(0, 5) || '00:00',
+                            endTime: row.shift?.end_time?.substring(0, 5) || '00:00',
+                            members: []
+                          });
+                        }
+                        shiftsMap.get(shiftKey).members.push(row);
+                      });
+
+                      const shiftGroups = Array.from(shiftsMap.values()).sort((a, b) => a.startTime.localeCompare(b.startTime));
+
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                          {shiftGroups.map(group => {
+                            const isPagi = group.startTime === '08:00';
+                            const accentColor = isPagi ? '#ea580c' : 'var(--primary-color)';
+                            const icon = isPagi ? '🌅' : '☀️';
+                            const bgColor = isPagi ? '#fff7ed' : '#f0f9ff';
+                            const borderColor = isPagi ? '#fdba74' : '#bae6fd';
+
+                            return (
+                              <div key={group.startTime} style={{ borderRadius: '12px', overflow: 'hidden', border: `1px solid ${borderColor}`, boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                                <div style={{ backgroundColor: bgColor, padding: '1rem 1.5rem', borderBottom: `1px solid ${borderColor}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                  <div>
+                                    <h3 style={{ margin: 0, color: accentColor, display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '1.1rem' }}>
+                                      <span>{icon}</span> {group.name.toUpperCase()}
+                                    </h3>
+                                    <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '0.25rem', fontWeight: '500' }}>
+                                      {group.startTime} — {group.endTime}
+                                    </div>
+                                  </div>
+                                  <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: accentColor, backgroundColor: 'white', padding: '0.25rem 0.75rem', borderRadius: '999px', border: `1px solid ${borderColor}` }}>
+                                    {group.members.length} Panitia
+                                  </div>
+                                </div>
+                                <div className="table-responsive" style={{ margin: 0, border: 'none' }}>
+                                  <table className="monitoring-table" style={{ margin: 0, borderCollapse: 'collapse' }}>
+                                    <thead style={{ backgroundColor: 'white' }}>
+                                      <tr><th style={{ borderBottom: `1px solid ${borderColor}` }}>Nama Panitia</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>IN</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>OUT</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>Status</th><th style={{ borderBottom: `1px solid ${borderColor}` }}>Keterangan</th></tr>
+                                    </thead>
+                                    <tbody style={{ backgroundColor: 'white' }}>
+                                      {group.members.map(row => {
+                                        const reasons = [];
+                                        if (row.in_record?.late_reason) reasons.push('Terlambat: ' + row.in_record.late_reason);
+                                        if (row.out_record?.early_checkout_reason) reasons.push('Pulang cepat: ' + row.out_record.early_checkout_reason);
+                                        const keterangan = reasons.length > 0 ? reasons.join('; ') : '-';
+
+                                        let statusEl = <span className="badge-belum">Belum Absen</span>;
+                                        if (row.in_record && !row.out_record) {
+                                          statusEl = <span className="badge-hadir" style={{ backgroundColor: '#e0f2fe', color: '#0284c7', border: '1px solid #bae6fd' }}>Sedang Bertugas</span>;
+                                        } else if (row.in_record && row.out_record) {
+                                          if (row.in_record.late_status === 'terlambat') {
+                                            statusEl = <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Selesai (Terlambat)</span>;
+                                          } else {
+                                            statusEl = <span className="badge-hadir">Selesai</span>;
+                                          }
+                                        }
+
+                                        return (
+                                          <tr key={`${row.id}_${row.schedule_id}`} style={{ borderBottom: '1px solid #f1f5f9' }}>
+                                            <td style={{ fontWeight: '500' }}>{row.full_name}</td>
+                                            <td>{row.in_record ? formatTimeWIB(row.in_record.waktu_absen) : '—'}</td>
+                                            <td>{row.out_record ? formatTimeWIB(row.out_record.waktu_absen) : '—'}</td>
+                                            <td>{statusEl}</td>
+                                            <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                                              {keterangan}
+                                            </td>
+                                          </tr>
+                                        );
+                                      })}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
 
-                  {/* Phase 8A: JADWAL SHIFT SUMMARY */}
-                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
+                  {/* Phase 8A: JADWAL HARI INI & BESOK (Compact) */}
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '2rem' }}>
                     <div className="event-header">
-                      <h2>JADWAL HARI INI & BESOK</h2>
-                      <button type="button" onClick={() => setActiveTab('jadwal')} className="btn btn-primary btn-small" style={{ width: 'auto' }}>
+                      <h2 style={{ fontSize: '1.1rem' }}>JADWAL HARI INI & BESOK</h2>
+                      <button type="button" onClick={() => setActiveTab('jadwal')} className="btn btn-primary btn-small" style={{ width: 'auto', backgroundColor: 'var(--text-secondary)' }}>
                         Lihat Semua Jadwal
                       </button>
                     </div>
@@ -668,25 +817,35 @@ export default function Dashboard() {
                       tomorrowDate.setDate(tomorrowDate.getDate() + 1);
                       const tomorrowStr = getJakartaDayBounds(tomorrowDate).dateStr;
                       
-                      const relevantSchedules = schedulesList.filter(s => s.schedule_date === todayStr || s.schedule_date === tomorrowStr);
+                      const relevantSchedules = schedulesList
+                        .filter(s => s.schedule_date === todayStr || s.schedule_date === tomorrowStr)
+                        .sort((a, b) => {
+                          if (a.schedule_date !== b.schedule_date) {
+                            return a.schedule_date.localeCompare(b.schedule_date);
+                          }
+                          return (a.shifts?.start_time || '').localeCompare(b.shifts?.start_time || '');
+                        });
                       
                       if (relevantSchedules.length === 0) {
                         return <p style={{ color: 'var(--text-secondary)' }}>Belum ada jadwal untuk hari ini atau besok.</p>;
                       }
                       
                       return (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
                           {relevantSchedules.map(sched => (
-                            <div key={sched.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '0.75rem 1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                            <div key={sched.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                               <div>
-                                <span style={{ fontWeight: 'bold' }}>
-                                  {sched.schedule_date === todayStr ? 'Hari ini' : 'Besok'} — {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {sched.shifts?.name}
-                                </span>
-                                <span style={{ color: '#64748b', marginLeft: '0.5rem', fontSize: '0.9rem' }}>
-                                  {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · {sched.shift_members?.length || 0} panitia
-                                </span>
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '0.25rem', fontWeight: 'bold' }}>
+                                  {sched.schedule_date === todayStr ? 'HARI INI' : 'BESOK'}
+                                </div>
+                                <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.25rem', color: 'var(--primary-color)' }}>
+                                  {sched.shifts?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {sched.shifts?.name}
+                                </div>
+                                <div style={{ color: '#64748b', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                                  {sched.shifts?.start_time?.substring(0,5)}–{sched.shifts?.end_time?.substring(0,5)} · <strong>{sched.shift_members?.length || 0} Panitia</strong>
+                                </div>
                               </div>
-                              <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small">
+                              <button onClick={() => { setSelectedSchedule(sched); setMemberFormData({ selectedPanitia: (sched.shift_members || []).map(m => m.user_id) }); setIsMemberModalOpen(true); }} className="btn btn-primary btn-small" style={{ padding: '0.4rem 0.8rem' }}>
                                 Kelola
                               </button>
                             </div>
@@ -696,58 +855,31 @@ export default function Dashboard() {
                     })()}
                   </div>
 
-                  {/* Phase C: MONITORING */}
-                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
-                    <h2 style={{ marginBottom: '1rem' }}>MONITORING ABSENSI HARI INI</h2>
-                    {monitoringData && (
-                      <div className="table-responsive">
-                        <table className="monitoring-table">
-                          <thead><tr><th>Nama Panitia</th><th>Shift</th><th>IN</th><th>OUT</th><th>Status</th><th>Keterangan</th></tr></thead>
-                          <tbody>
-                            {monitoringData.map(row => {
-                              const reasons = [];
-                              if (row.in_record?.late_reason) reasons.push('Terlambat: ' + row.in_record.late_reason);
-                              if (row.out_record?.early_checkout_reason) reasons.push('Pulang cepat: ' + row.out_record.early_checkout_reason);
-                              const keterangan = reasons.length > 0 ? reasons.join('; ') : '-';
-
-                              let statusEl = <span className="badge-belum">Belum Absen</span>;
-                              if (row.in_record && !row.out_record) {
-                                statusEl = <span className="badge-hadir" style={{ backgroundColor: '#e0f2fe', color: '#0284c7', border: '1px solid #bae6fd' }}>Sedang Bertugas</span>;
-                              } else if (row.in_record && row.out_record) {
-                                if (row.in_record.late_status === 'terlambat') {
-                                  statusEl = <span className="badge-belum" style={{ backgroundColor: '#fef3c7', color: '#d97706', border: '1px solid #fde68a' }}>Selesai (Terlambat)</span>;
-                                } else {
-                                  statusEl = <span className="badge-hadir">Selesai</span>;
-                                }
-                              }
-
-                              return (
-                                <tr key={`${row.id}_${row.schedule_id}`}>
-                                  <td>{row.full_name}</td>
-                                  <td>
-                                    {row.shift?.start_time?.substring(0,5) === '08:00' ? '🌅' : '☀️'} {row.shift?.name}
-                                    <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{row.shift?.start_time?.substring(0,5)}–{row.shift?.end_time?.substring(0,5)}</div>
-                                  </td>
-                                  <td>{row.in_record ? formatTimeWIB(row.in_record.waktu_absen) : '—'}</td>
-                                  <td>{row.out_record ? formatTimeWIB(row.out_record.waktu_absen) : '—'}</td>
-                                  <td>{statusEl}</td>
-                                  <td style={{ maxWidth: '200px', wordWrap: 'break-word', fontSize: '0.9rem' }}>
-                                    {keterangan}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                  {/* Phase E: TASK / ASSIGNMENT */}
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '2rem' }}>
+                    <div className="event-header">
+                      <h2 style={{ fontSize: '1.1rem' }}>TUGAS (TODO & IN PROGRESS)</h2>
+                      <button type="button" onClick={openCreateTaskModal} className="btn btn-primary btn-small" style={{ width: 'auto' }}>+ Buat Task</button>
+                    </div>
+                    {tasks.length > 0 ? (
+                      <TaskList 
+                        tasks={tasks} 
+                        formatDate={formatDate}
+                        currentUserRole={profile?.role}
+                        openTaskDetail={openTaskDetail} 
+                        openEditTaskModal={openEditTaskModal}
+                        handleDeleteTask={handleDeleteTask}
+                      />
+                    ) : (
+                      <p style={{ color: 'var(--text-secondary)' }}>Belum ada task.</p>
                     )}
                   </div>
 
                   {/* Phase 7B: KIOSK STATION MANAGEMENT */}
-                  <div className="event-section" style={{ marginTop: 0, marginBottom: '4rem' }}>
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
                     <div className="event-header">
-                      <h2>MANAJEMEN KIOSK STATION</h2>
-                      <button type="button" onClick={() => { setStationFormData({ name: '' }); setPairingResult(null); setFormError(''); setIsStationModalOpen(true); }} className="btn btn-primary" style={{ width: 'auto' }}>+ Register Kiosk</button>
+                      <h2 style={{ fontSize: '1.1rem' }}>MANAJEMEN KIOSK STATION</h2>
+                      <button type="button" onClick={() => { setStationFormData({ name: '' }); setPairingResult(null); setFormError(''); setIsStationModalOpen(true); }} className="btn btn-primary btn-small" style={{ width: 'auto' }}>+ Register Kiosk</button>
                     </div>
                     <div className="table-responsive">
                       <table className="monitoring-table">
@@ -824,6 +956,18 @@ export default function Dashboard() {
                 <>
                   <h2 className="page-title">RIWAYAT &amp; LOG</h2>
                   
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end', marginBottom: '1.5rem' }}>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Dari Tanggal</label>
+                      <input type="date" className="form-control" value={logDateFrom} onChange={e => setLogDateFrom(e.target.value)} />
+                    </div>
+                    <div className="form-group" style={{ margin: 0 }}>
+                      <label>Sampai Tanggal</label>
+                      <input type="date" className="form-control" value={logDateTo} onChange={e => setLogDateTo(e.target.value)} />
+                    </div>
+                    <button type="button" onClick={() => { setLogDateFrom(''); setLogDateTo(''); setAttendanceShiftFilter('all'); setAttendanceStatusFilter('all'); setAttendanceSearchQuery(''); }} className="btn btn-primary btn-small" style={{ backgroundColor: 'var(--text-secondary)' }}>Reset Filter</button>
+                  </div>
+
                   {/* Phase E: RIWAYAT TUGAS */}
                   <div className="event-section section-spacing">
                     <div className="event-header">
@@ -833,7 +977,7 @@ export default function Dashboard() {
                       </button>
                     </div>
                     <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
-                      {taskHistoryLogs.map(log => {
+                      {filteredTaskHistoryLogs.map(log => {
                         const createdDate = new Date(log.tasks?.created_at || log.created_at);
                         const isOldIncomplete = log.tasks?.status !== 'completed' && createdDate < new Date(new Date().setHours(0,0,0,0));
                         return (
@@ -853,23 +997,76 @@ export default function Dashboard() {
                           </div>
                         );
                       })}
-                      {taskHistoryLogs.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada riwayat update task.</p>}
+                      {filteredTaskHistoryLogs.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada riwayat update task.</p>}
+                    </div>
+                  </div>
+
+                  {/* RIWAYAT AKSI TASK (AUDIT LOG) */}
+                  <div className="event-section section-spacing">
+                    <div className="event-header">
+                      <h2>RIWAYAT AKSI TASK (DIBUAT/DIEDIT/DIHAPUS)</h2>
+                      <button type="button" onClick={handleExportTaskAuditLogs} className="btn btn-primary btn-small" style={{ width: 'auto' }}>
+                        ⬇ Export CSV
+                      </button>
+                    </div>
+                    <div className="history-timeline" style={{ background: '#f8fafc', padding: '1.5rem', borderRadius: '12px', maxHeight: '500px', overflowY: 'auto' }}>
+                      {filteredTaskAuditLogs.map(log => (
+                        <div key={log.id} className="history-item" style={{ borderLeftColor: log.action === 'deleted' ? '#ef4444' : log.action === 'created' ? '#10b981' : '#f59e0b', padding: '0 0 0 1rem', marginBottom: '1rem' }}>
+                          <div className="history-meta" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <div>
+                              <strong style={{ color: 'var(--primary-color)' }}>{log.profiles?.full_name}</strong>
+                              <span style={{ marginLeft: '0.5rem', fontSize: '0.85rem' }}>telah <strong style={{ textTransform: 'uppercase' }}>{log.action}</strong> task: <strong>{log.task_title_snapshot}</strong></span>
+                            </div>
+                            <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>{new Date(log.created_at).toLocaleString('id-ID')}</span>
+                          </div>
+                          {log.detail && (
+                            <div style={{ fontSize: '0.8rem', marginTop: '0.5rem', background: '#fff', padding: '0.5rem', borderRadius: '4px', border: '1px solid #e2e8f0' }}>
+                              <details>
+                                <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)' }}>Lihat Detail Perubahan</summary>
+                                <pre style={{ margin: '0.5rem 0 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: '0.75rem' }}>{JSON.stringify(log.detail, null, 2)}</pre>
+                              </details>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {filteredTaskAuditLogs.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada riwayat aksi task.</p>}
                     </div>
                   </div>
 
                   {/* RIWAYAT ABSENSI */}
                   <div className="event-section section-spacing">
-                    <div className="event-header">
+                    <div className="event-header" style={{ marginBottom: '1rem' }}>
                       <h2>RIWAYAT ABSENSI KESELURUHAN</h2>
                       <button type="button" onClick={handleExportAttendance} className="btn btn-primary btn-small" style={{ width: 'auto' }}>
                         ⬇ Export CSV
                       </button>
                     </div>
+                    <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', marginBottom: '1.5rem', backgroundColor: '#f8fafc', padding: '1rem', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                      <div className="form-group" style={{ margin: 0, flex: '1 1 200px' }}>
+                        <select className="form-control" value={attendanceShiftFilter} onChange={e => setAttendanceShiftFilter(e.target.value)}>
+                          <option value="all">Semua Shift</option>
+                          <option value="Pagi">Pagi</option>
+                          <option value="Siang">Siang</option>
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0, flex: '1 1 200px' }}>
+                        <select className="form-control" value={attendanceStatusFilter} onChange={e => setAttendanceStatusFilter(e.target.value)}>
+                          <option value="all">Semua Status</option>
+                          <option value="Belum Absen">Belum Absen</option>
+                          <option value="Sedang Bertugas">Sedang Bertugas</option>
+                          <option value="Terlambat">Terlambat (Selesai)</option>
+                          <option value="Selesai">Selesai (Tepat Waktu)</option>
+                        </select>
+                      </div>
+                      <div className="form-group" style={{ margin: 0, flex: '2 1 300px' }}>
+                        <input type="text" className="form-control" placeholder="🔍 Cari Panitia..." value={attendanceSearchQuery} onChange={e => setAttendanceSearchQuery(e.target.value)} />
+                      </div>
+                    </div>
                     <div className="table-responsive" style={{ maxHeight: '400px', overflowY: 'auto' }}>
                       <table className="monitoring-table">
                         <thead><tr><th>Tanggal</th><th>Nama Panitia</th><th>Shift</th><th>IN</th><th>OUT</th><th>Status</th><th>Keterangan</th></tr></thead>
                         <tbody>
-                          {attendanceHistory.map(row => {
+                          {filteredAttendanceHistory.map(row => {
                             const reasons = [];
                             if (row.in_record?.late_reason) reasons.push('Terlambat: ' + row.in_record.late_reason);
                             if (row.out_record?.early_checkout_reason) reasons.push('Pulang cepat: ' + row.out_record.early_checkout_reason);
@@ -901,7 +1098,14 @@ export default function Dashboard() {
                               </tr>
                             );
                           })}
-                          {attendanceHistory.length === 0 && <tr><td colSpan="7" style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Belum ada riwayat absensi.</td></tr>}
+                          {filteredAttendanceHistory.length === 0 && (
+                            <tr>
+                              <td colSpan="7" style={{ textAlign: 'center', padding: '3rem 1rem' }}>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', fontWeight: 'bold' }}>Tidak ada data absensi</div>
+                                <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.5rem' }}>Coba ubah filter atau kata pencarian.</div>
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1084,7 +1288,18 @@ export default function Dashboard() {
                     <button type="button" onClick={openCreateTaskModal} className="btn btn-primary btn-small" style={{ width: 'auto', marginBottom: '1rem' }}>+ Buat Task</button>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                    <TaskList tasks={tasks} formatDate={formatDate} openTaskDetail={openTaskDetail} openEditTaskModal={openEditTaskModal} handleDeleteTask={handleDeleteTask} />
+                    <TaskList tasks={tasks} formatDate={formatDate} currentUserRole={profile?.role} openTaskDetail={openTaskDetail} openEditTaskModal={openEditTaskModal} handleDeleteTask={handleDeleteTask} />
+                    
+                    <div className="event-section" style={{ minWidth: '300px', margin: '0' }}>
+                      <div className="event-header">
+                        <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem' }}>KEGIATAN SAYA (UPDATE & LOG)</h3>
+                      </div>
+                      {myActivityTasks.length > 0 ? (
+                        <TaskList tasks={myActivityTasks} formatDate={formatDate} currentUserRole={profile?.role} openTaskDetail={openTaskDetail} openEditTaskModal={openEditTaskModal} handleDeleteTask={handleDeleteTask} />
+                      ) : (
+                        <p style={{ color: 'var(--text-secondary)' }}>Belum ada log aktivitas tugas.</p>
+                      )}
+                    </div>
                     
                     {/* Phase D: EVENT / KEGIATAN */}
                     <div className="event-section" style={{ minWidth: '300px', margin: '0' }}>
