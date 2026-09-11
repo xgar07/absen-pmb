@@ -40,13 +40,21 @@ const getDressCode = (dateStr, settings = []) => {
   
   const localDate = new Date(year, month - 1, day);
   const dayOfWeek = localDate.getDay(); 
-  const dayOfMonth = localDate.getDate();
   
-  const weekOfMonth = Math.ceil(dayOfMonth / 7);
+  // Phase 11: Find the Monday of the current week (to define week boundaries)
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const mondayDate = new Date(localDate);
+  mondayDate.setDate(localDate.getDate() + diffToMonday);
   
-  // Phase 11: Get first week type from settings or default to GANJIL
+  const mondayYear = mondayDate.getFullYear();
+  const mondayMonth = mondayDate.getMonth() + 1;
+  const mondayDay = mondayDate.getDate();
+  
+  const weekOfMonth = Math.ceil(mondayDay / 7);
+  
+  // Get first week type from settings based on Monday's month, or default to GANJIL
   let firstWeekType = 'GANJIL';
-  const setting = settings.find(s => s.year === year && s.month === month);
+  const setting = settings.find(s => s.year === mondayYear && s.month === mondayMonth);
   if (setting && setting.first_week_type) {
     firstWeekType = setting.first_week_type;
   }
