@@ -32,18 +32,28 @@ function downloadCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
-const getDressCode = (dateStr) => {
+const getDressCode = (dateStr, settings = []) => {
   const parts = dateStr.split('-');
   const year = parseInt(parts[0], 10);
-  const month = parseInt(parts[1], 10) - 1;
+  const month = parseInt(parts[1], 10);
   const day = parseInt(parts[2], 10);
   
-  const localDate = new Date(year, month, day);
+  const localDate = new Date(year, month - 1, day);
   const dayOfWeek = localDate.getDay(); 
   const dayOfMonth = localDate.getDate();
   
   const weekOfMonth = Math.ceil(dayOfMonth / 7);
-  const weekType = weekOfMonth % 2 === 1 ? "GANJIL" : "GENAP";
+  
+  // Phase 11: Get first week type from settings or default to GANJIL
+  let firstWeekType = 'GANJIL';
+  const setting = settings.find(s => s.year === year && s.month === month);
+  if (setting && setting.first_week_type) {
+    firstWeekType = setting.first_week_type;
+  }
+  
+  const weekType = weekOfMonth % 2 === 1 
+    ? firstWeekType 
+    : (firstWeekType === 'GANJIL' ? 'GENAP' : 'GANJIL');
   
   const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
   const dayName = days[dayOfWeek];
@@ -134,6 +144,42 @@ export default function Dashboard() {
   const [scheduleDisplayLimit, setScheduleDisplayLimit] = useState(7);
   const [showPastSchedules, setShowPastSchedules] = useState(false);
 
+  // Phase 11 States
+  const [dressCodeSettings, setDressCodeSettings] = useState([]);
+  const [dcSettingYear, setDcSettingYear] = useState(new Date().getFullYear());
+  const [dcSettingMonth, setDcSettingMonth] = useState(new Date().getMonth() + 1);
+  const [dcSettingType, setDcSettingType] = useState('GANJIL');
+  const [dcSettingLoading, setDcSettingLoading] = useState(false);
+
+  // Sync dcSettingType when year/month changes or data loads
+  useEffect(() => {
+    const setting = dressCodeSettings.find(s => s.year === dcSettingYear && s.month === dcSettingMonth);
+    setDcSettingType(setting ? setting.first_week_type : 'GANJIL');
+  }, [dcSettingYear, dcSettingMonth, dressCodeSettings]);
+
+  const handleSaveDressCodeSetting = async (e) => {
+    e.preventDefault();
+    setDcSettingLoading(true);
+    
+    const { data, error } = await supabase.from('dress_code_settings').upsert({
+      year: dcSettingYear,
+      month: dcSettingMonth,
+      first_week_type: dcSettingType,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'year,month' }).select();
+    
+    if (error) {
+      window.alert('Gagal menyimpan pengaturan: ' + error.message);
+    } else {
+      window.alert('Pengaturan seragam berhasil disimpan!');
+      setDressCodeSettings(prev => {
+        const filtered = prev.filter(s => !(s.year === dcSettingYear && s.month === dcSettingMonth));
+        return [...filtered, data[0]];
+      });
+    }
+    setDcSettingLoading(false);
+  };
+
   const isShiftEnded = (schedule) => {
     if (!schedule?.schedule_date || !schedule?.shifts?.end_time) return false;
     const endDateTimeStr = `${schedule.schedule_date}T${schedule.shifts.end_time}`;
@@ -185,6 +231,12 @@ export default function Dashboard() {
       setProfile(profileData);
 
       const bounds = getJakartaDayBounds();
+
+      // Phase 11: Dress Code Settings
+      const { data: dcSettingsData, error: dcError } = await supabase.from('dress_code_settings').select('*');
+      if (!dcError) {
+        setDressCodeSettings(dcSettingsData || []);
+      }
 
       if (profileData.role === 'panitia') {
         // Attendance
@@ -1181,6 +1233,55 @@ export default function Dashboard() {
               {activeTab === 'jadwal' && (
                 <>
                   <h2 className="page-title">JADWAL SHIFT</h2>
+                  
+                  {/* Phase 11: Pengaturan Seragam */}
+                  <div className="event-section" style={{ marginTop: '2rem', marginBottom: '2rem', backgroundColor: '#f8fafc', padding: '1.5rem', borderRadius: '12px', border: '1px solid #e2e8f0' }}>
+                    <div className="event-header" style={{ marginBottom: '1rem' }}>
+                      <h3 style={{ fontSize: '1.2rem', color: '#0f172a' }}>PENGATURAN MINGGU SERAGAM</h3>
+                    </div>
+                    <form onSubmit={handleSaveDressCodeSetting}>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <select className="form-control" style={{ width: '130px', padding: '0.4rem' }} value={dcSettingMonth} onChange={e => setDcSettingMonth(parseInt(e.target.value))} required>
+                            <option value={1}>Januari</option>
+                            <option value={2}>Februari</option>
+                            <option value={3}>Maret</option>
+                            <option value={4}>April</option>
+                            <option value={5}>Mei</option>
+                            <option value={6}>Juni</option>
+                            <option value={7}>Juli</option>
+                            <option value={8}>Agustus</option>
+                            <option value={9}>September</option>
+                            <option value={10}>Oktober</option>
+                            <option value={11}>November</option>
+                            <option value={12}>Desember</option>
+                          </select>
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <input type="number" className="form-control" style={{ width: '90px', padding: '0.4rem' }} value={dcSettingYear} onChange={e => setDcSettingYear(parseInt(e.target.value))} required />
+                        </div>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginLeft: '1rem' }}>
+                          <label style={{ fontSize: '0.9rem', color: '#64748b', fontWeight: '600' }}>Minggu pertama bulan ini:</label>
+                          <select 
+                            className="form-control" 
+                            style={{ width: '120px', padding: '0.4rem' }} 
+                            value={dcSettingType}
+                            onChange={(e) => setDcSettingType(e.target.value)}
+                          >
+                            <option value="GANJIL">GANJIL</option>
+                            <option value="GENAP">GENAP</option>
+                          </select>
+                        </div>
+                        <button type="submit" disabled={dcSettingLoading} className="btn btn-primary btn-small" style={{ marginLeft: 'auto', width: 'auto' }}>
+                          {dcSettingLoading ? 'Menyimpan...' : 'SIMPAN'}
+                        </button>
+                      </div>
+                      <div style={{ marginTop: '1rem', fontSize: '0.85rem', color: '#64748b', display: 'flex', alignItems: 'flex-start', gap: '0.5rem' }}>
+                        <span>ℹ</span>
+                        <span>Minggu berikutnya akan otomatis bergantian Ganjil / Genap setiap kelipatan 7 hari. Jika belum diatur, default minggu pertama adalah GANJIL.</span>
+                      </div>
+                    </form>
+                  </div>
                   <div className="event-section" style={{ marginTop: '2rem', marginBottom: '4rem' }}>
                     <div className="event-header">
                       <h2>SEMUA JADWAL SHIFT</h2>
@@ -1292,7 +1393,7 @@ export default function Dashboard() {
                   
                   {(() => {
                     const todayStr = getJakartaDayBounds().dateStr;
-                    const { dayName, weekType, dressCode } = getDressCode(todayStr);
+                    const { dayName, weekType, dressCode } = getDressCode(todayStr, dressCodeSettings);
                     
                     let bg = '#f8fafc';
                     let fg = '#64748b';
@@ -1546,7 +1647,7 @@ export default function Dashboard() {
                                   );
                                 }
 
-                                const { dayName, dressCode } = getDressCode(row.date);
+                                const { dayName, dressCode } = getDressCode(row.date, dressCodeSettings);
                                 const dateObj = new Date(row.date);
                                 const formattedDate = `${dayName}, ${dateObj.getDate()} ${dateObj.toLocaleString('id-ID', { month: 'short' })}`;
                                 const badgeTheme = dressCode ? seragamBadgeColor(dressCode) : null;
