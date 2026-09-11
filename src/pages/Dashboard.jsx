@@ -32,6 +32,38 @@ function downloadCSV(filename, headers, rows) {
   URL.revokeObjectURL(url);
 }
 
+const getDressCode = (dateStr) => {
+  const parts = dateStr.split('-');
+  const year = parseInt(parts[0], 10);
+  const month = parseInt(parts[1], 10) - 1;
+  const day = parseInt(parts[2], 10);
+  
+  const localDate = new Date(year, month, day);
+  const dayOfWeek = localDate.getDay(); 
+  const dayOfMonth = localDate.getDate();
+  
+  const weekOfMonth = Math.ceil(dayOfMonth / 7);
+  const weekType = weekOfMonth % 2 === 1 ? "GANJIL" : "GENAP";
+  
+  const days = ["Minggu", "Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+  const dayName = days[dayOfWeek];
+  
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return { dayName, weekType, dressCode: null };
+  }
+  
+  let dressCode = null;
+  if (weekType === "GANJIL") {
+    const map = { 1: "Batik", 2: "Mustard", 3: "Navy", 4: "Batik", 5: "Mustard" };
+    dressCode = map[dayOfWeek];
+  } else {
+    const map = { 1: "Navy", 2: "Batik", 3: "Mustard", 4: "Navy", 5: "Batik" };
+    dressCode = map[dayOfWeek];
+  }
+  
+  return { dayName, weekType, dressCode };
+};
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
@@ -48,6 +80,11 @@ export default function Dashboard() {
   const [events, setEvents] = useState([]);
   const [panitiaList, setPanitiaList] = useState([]); 
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // Jadwal Keseluruhan
+  const [allSchedules, setAllSchedules] = useState([]);
+  const [allSchedulesLimit, setAllSchedulesLimit] = useState(20);
+  const [showPastAllSchedules, setShowPastAllSchedules] = useState(false);
   const [modalMode, setModalMode] = useState('create');
   const [formData, setFormData] = useState({ id: null, name: '', date: '', start_time: '', end_time: '', selectedPanitia: [] });
 
@@ -163,6 +200,11 @@ export default function Dashboard() {
         const { data: rawMyShifts } = await supabase.from('shift_members').select('schedule_id, shift_schedules(schedule_date, shifts(name, start_time, end_time))').eq('user_id', user.id);
         const validShifts = (rawMyShifts || []).filter(x => x.shift_schedules && x.shift_schedules.schedule_date >= todayStr).sort((a,b) => a.shift_schedules.schedule_date.localeCompare(b.shift_schedules.schedule_date));
         setMySchedules(validShifts);
+
+        // Phase 8G: Jadwal Keseluruhan
+        const { data: allSchedulesData } = await supabase.from('shift_schedules')
+          .select('*, shifts(*), shift_members(*, profiles(full_name))');
+        setAllSchedules(allSchedulesData || []);
 
         // Tasks (Phase E) - Panitia sees all
         const { data: tasksData } = await supabase.from('tasks').select('*, creator:created_by(full_name, role), profiles:last_updated_by(full_name)').eq('is_deleted', false).order('deadline', { ascending: true }).order('created_at', { ascending: false });
@@ -1222,7 +1264,7 @@ export default function Dashboard() {
             <div className="dashboard-placeholder panitia-view view-inner">
               
               {/* IN-PAGE PANITIA TABS */}
-              <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px' }}>
+              <div style={{ display: 'flex', gap: '12px', marginBottom: '20px', borderBottom: '1px solid var(--border-color)', paddingBottom: '10px', flexWrap: 'wrap' }}>
                 <button 
                   onClick={() => setActiveTab('dashboard')} 
                   style={{ background: activeTab === 'dashboard' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'dashboard' ? 'white' : 'var(--text-secondary)', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
@@ -1235,6 +1277,12 @@ export default function Dashboard() {
                 >
                   Tugas & Kegiatan
                 </button>
+                <button 
+                  onClick={() => setActiveTab('jadwal')} 
+                  style={{ background: activeTab === 'jadwal' ? 'var(--primary-color)' : 'transparent', color: activeTab === 'jadwal' ? 'white' : 'var(--text-secondary)', border: 'none', padding: '8px 16px', borderRadius: '20px', fontWeight: '600', cursor: 'pointer' }}
+                >
+                  Jadwal Keseluruhan
+                </button>
               </div>
 
               {activeTab === 'dashboard' && (
@@ -1242,6 +1290,43 @@ export default function Dashboard() {
                   <h2 className="page-title">DASHBOARD PETUGAS</h2>
                   <p style={{ color: 'var(--text-secondary)', marginBottom: '2rem' }}>Selamat datang, {profile.full_name}.</p>
                   
+                  {(() => {
+                    const todayStr = getJakartaDayBounds().dateStr;
+                    const { dayName, weekType, dressCode } = getDressCode(todayStr);
+                    
+                    let bg = '#f8fafc';
+                    let fg = '#64748b';
+                    let label = 'Tidak ada jadwal seragam';
+                    
+                    if (dressCode) {
+                      label = dressCode.toUpperCase();
+                      if (dressCode === 'Batik') {
+                        bg = '#fff7ed';
+                        fg = '#9a3412';
+                      } else if (dressCode === 'Mustard') {
+                        bg = '#fef08a';
+                        fg = '#854d0e';
+                      } else if (dressCode === 'Navy') {
+                        bg = '#eff6ff';
+                        fg = '#1e3a8a';
+                      }
+                    }
+
+                    return (
+                      <div className="attendance-section attendance-card" style={{ marginBottom: '2rem', borderLeft: `4px solid ${fg}` }}>
+                        <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '0.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem', textAlign: 'center' }}>DRESS CODE HARI INI</h3>
+                        <div style={{ backgroundColor: bg, padding: '1rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center' }}>
+                          <div style={{ fontWeight: 'bold', fontSize: '1.25rem', color: fg, marginBottom: '0.25rem' }}>{label}</div>
+                          {dressCode && (
+                            <div style={{ fontSize: '0.9rem', color: '#64748b' }}>
+                              {dayName} • Minggu {weekType}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
                   {/* Phase 8B: JADWAL SAYA & ATTENDANCE */}
                   <div className="attendance-section attendance-card">
                     <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '1rem', textAlign: 'center' }}>JADWAL SAYA</h3>
@@ -1379,6 +1464,154 @@ export default function Dashboard() {
                         {events.length === 0 && <p style={{ color: 'var(--text-secondary)' }}>Belum ada penugasan kegiatan.</p>}
                       </div>
                     </div>
+                  </div>
+                </>
+              )}
+
+              {activeTab === 'jadwal' && (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+                    <h2 className="page-title">JADWAL KESELURUHAN</h2>
+                  </div>
+                  
+                  <div className="attendance-section attendance-card">
+                    {allSchedules.length === 0 ? (
+                      <p style={{ color: 'var(--text-secondary)', textAlign: 'center', padding: '2rem 0' }}>Belum ada jadwal tersedia.</p>
+                    ) : (
+                      <div className="table-responsive">
+                        <table className="table" style={{ minWidth: '600px' }}>
+                          <thead>
+                            <tr>
+                              <th>No</th>
+                              <th>Nama Petugas</th>
+                              <th>Hari, Tanggal</th>
+                              <th>Shift</th>
+                              <th>Seragam</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {(() => {
+                              const todayStr = getJakartaDayBounds().dateStr;
+                              const flattened = [];
+                              allSchedules.forEach(schedule => {
+                                (schedule.shift_members || []).forEach(member => {
+                                  flattened.push({
+                                    id: member.id,
+                                    user_id: member.user_id,
+                                    partnerName: member.profiles?.full_name || 'Unknown',
+                                    date: schedule.schedule_date,
+                                    shiftName: schedule.shifts?.name || 'Unknown',
+                                    startTime: schedule.shifts?.start_time || '00:00:00'
+                                  });
+                                });
+                              });
+
+                              let filtered = flattened;
+                              if (!showPastAllSchedules) {
+                                filtered = filtered.filter(row => row.date >= todayStr);
+                              }
+
+                              filtered.sort((a, b) => {
+                                if (a.date !== b.date) return a.date.localeCompare(b.date);
+                                if (a.startTime !== b.startTime) return a.startTime.localeCompare(b.startTime);
+                                return a.partnerName.localeCompare(b.partnerName);
+                              });
+
+                              const hasMore = allSchedulesLimit < filtered.length;
+                              const visibleRows = filtered.slice(0, allSchedulesLimit);
+                              
+                              const seragamBadgeColor = (seragam) => {
+                                const map = {
+                                  'Batik': { bg: '#fef3c7', text: '#92400e' },
+                                  'Navy': { bg: '#dbeafe', text: '#1e3a8a' },
+                                  'Mustard': { bg: '#fef9c3', text: '#854d0e' },
+                                };
+                                return map[seragam] || { bg: '#f1f5f9', text: '#334155' };
+                              };
+
+                              const renderContent = [];
+                              visibleRows.forEach((row, index) => {
+                                const isToday = row.date === todayStr;
+                                const prevRow = visibleRows[index - 1];
+                                const showTodayDivider = isToday && (!prevRow || prevRow.date !== todayStr);
+                                const isMine = row.user_id === profile?.id;
+                                
+                                if (showTodayDivider) {
+                                  renderContent.push(
+                                    <tr key={`divider-${row.date}`}>
+                                      <td colSpan="5" style={{ backgroundColor: '#dbeafe', color: '#1e40af', fontWeight: 'bold', textAlign: 'center', padding: '0.5rem' }}>
+                                        ── HARI INI ──
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+
+                                const { dayName, dressCode } = getDressCode(row.date);
+                                const dateObj = new Date(row.date);
+                                const formattedDate = `${dayName}, ${dateObj.getDate()} ${dateObj.toLocaleString('id-ID', { month: 'short' })}`;
+                                const badgeTheme = dressCode ? seragamBadgeColor(dressCode) : null;
+                                
+                                renderContent.push(
+                                  <tr key={row.id} style={{ backgroundColor: isMine ? '#fef9c3' : (isToday ? '#eff6ff' : 'transparent'), fontWeight: isMine ? '600' : 'normal' }}>
+                                    <td>{index + 1}</td>
+                                    <td style={{ fontWeight: isMine ? 'bold' : '500' }}>{row.partnerName}</td>
+                                    <td>{formattedDate}</td>
+                                    <td>
+                                      <span style={{ 
+                                        backgroundColor: row.shiftName.toLowerCase() === 'pagi' ? '#fff7ed' : '#eff6ff', 
+                                        color: row.shiftName.toLowerCase() === 'pagi' ? '#c2410c' : '#1d4ed8', 
+                                        padding: '4px 8px', 
+                                        borderRadius: '4px', 
+                                        fontSize: '0.85rem', 
+                                        fontWeight: '600' 
+                                      }}>
+                                        {row.shiftName}
+                                      </span>
+                                    </td>
+                                    <td>
+                                      {dressCode && badgeTheme ? (
+                                        <span style={{ backgroundColor: badgeTheme.bg, color: badgeTheme.text, padding: '0.15rem 0.6rem', borderRadius: '12px', fontSize: '0.85rem', fontWeight: '600' }}>
+                                          {dressCode}
+                                        </span>
+                                      ) : '-'}
+                                    </td>
+                                  </tr>
+                                );
+                              });
+                              
+                              return (
+                                <>
+                                  {renderContent}
+                                  <tr>
+                                    <td colSpan="5" style={{ textAlign: 'center', padding: '1rem', borderTop: '1px solid #f1f5f9' }}>
+                                      <div style={{ display: 'flex', justifyContent: 'center', gap: '1rem', alignItems: 'center' }}>
+                                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontSize: '0.9rem', color: '#64748b' }}>
+                                          <input 
+                                            type="checkbox" 
+                                            checked={showPastAllSchedules} 
+                                            onChange={e => setShowPastAllSchedules(e.target.checked)} 
+                                          />
+                                          Tampilkan Jadwal Lampau
+                                        </label>
+                                        
+                                        {hasMore && (
+                                          <button 
+                                            onClick={() => setAllSchedulesLimit(prev => prev + 20)}
+                                            style={{ background: '#f1f5f9', color: '#334155', border: '1px solid #cbd5e1', padding: '0.5rem 1rem', borderRadius: '6px', fontSize: '0.9rem', cursor: 'pointer', fontWeight: '600' }}
+                                          >
+                                            Muat Lebih Banyak ↓
+                                          </button>
+                                        )}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                </>
+                              );
+                            })()}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
                   </div>
                 </>
               )}
