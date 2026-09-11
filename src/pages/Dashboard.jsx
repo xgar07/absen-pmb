@@ -1423,7 +1423,7 @@ export default function Dashboard() {
 
                     return (
                       <div className="attendance-section attendance-card" style={{ marginBottom: '2rem', borderLeft: `4px solid ${fg}` }}>
-                        <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '0.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem', textAlign: 'center' }}>DRESS CODE HARI INI</h3>
+                        <h3 style={{ fontSize: '1.2rem', color: '#475569', marginBottom: '0.5rem', borderBottom: '1px solid #e2e8f0', paddingBottom: '0.5rem', textAlign: 'center' }}>SERAGAM HARI INI</h3>
                         <div style={{ backgroundColor: bg, padding: '1rem', borderRadius: '8px', marginTop: '1rem', textAlign: 'center' }}>
                           <div style={{ fontWeight: 'bold', fontSize: '1.25rem', color: fg, marginBottom: '0.25rem' }}>{label}</div>
                           {dressCode && (
